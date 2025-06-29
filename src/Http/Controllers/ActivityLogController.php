@@ -6,9 +6,9 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\View\View;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Log;
 use MuhammadSadeeq\ActivitylogUi\Services\ActivitylogService;
 use MuhammadSadeeq\ActivitylogUi\Services\AnalyticsService;
-use Illuminate\Support\Facades\Log;
 
 class ActivityLogController extends Controller
 {
@@ -192,15 +192,42 @@ class ActivityLogController extends Controller
             ], 403);
         }
 
-        // Get filters from request
-        $filters = $this->getFiltersFromRequest($request);
+        // Get period or custom date range
+        $filters = [];
 
-        $summary = $this->analyticsService->getDashboardSummary($filters);
+        if ($request->has('start_date') && $request->has('end_date')) {
+            $filters['start_date'] = $request->get('start_date');
+            $filters['end_date'] = $request->get('end_date');
+        } else {
+            $period = $request->get('period', 'today');
 
-        return response()->json([
-            'success' => true,
-            'data' => $summary,
-        ]);
+            if ($period === 'today') {
+                $filters['start_date'] = now()->startOfDay()->toDateString();
+                $filters['end_date'] = now()->endOfDay()->toDateString();
+            } else {
+                $filters['start_date'] = now()->subDays((int)$period)->startOfDay()->toDateString();
+                $filters['end_date'] = now()->endOfDay()->toDateString();
+            }
+        }
+
+        try {
+            $data = $this->analyticsService->getDashboardSummary($filters);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Analytics error: ' . $e->getMessage(), [
+                'exception' => $e,
+                'filters' => $filters,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load analytics data.',
+            ], 500);
+        }
     }
 
     /**
@@ -257,7 +284,7 @@ class ActivityLogController extends Controller
         ]);
     }
 
-        /**
+    /**
      * Get activities data for API calls.
      */
     public function getActivities(Request $request): JsonResponse

@@ -102,8 +102,11 @@ class AnalyticsService
      */
     protected function getActivitiesToday(array $filters = []): int
     {
-        $query = Activity::whereDate('created_at', today());
-        $this->applyFilters($query, $filters);
+        $query = Activity::query();
+        $this->applyFilters($query, array_merge($filters, [
+            'start_date' => now()->startOfDay()->toDateString(),
+            'end_date' => now()->endOfDay()->toDateString(),
+        ]));
         return $query->count();
     }
 
@@ -112,11 +115,11 @@ class AnalyticsService
      */
     protected function getActivitiesThisWeek(array $filters = []): int
     {
-        $query = Activity::whereBetween('created_at', [
-            now()->startOfWeek(),
-            now()->endOfWeek()
-        ]);
-        $this->applyFilters($query, $filters);
+        $query = Activity::query();
+        $this->applyFilters($query, array_merge($filters, [
+            'start_date' => now()->startOfWeek()->toDateString(),
+            'end_date' => now()->endOfWeek()->toDateString(),
+        ]));
         return $query->count();
     }
 
@@ -125,9 +128,11 @@ class AnalyticsService
      */
     protected function getActivitiesThisMonth(array $filters = []): int
     {
-        $query = Activity::whereMonth('created_at', now()->month)
-            ->whereYear('created_at', now()->year);
-        $this->applyFilters($query, $filters);
+        $query = Activity::query();
+        $this->applyFilters($query, array_merge($filters, [
+            'start_date' => now()->startOfMonth()->toDateString(),
+            'end_date' => now()->endOfMonth()->toDateString(),
+        ]));
         return $query->count();
     }
 
@@ -153,9 +158,20 @@ class AnalyticsService
         $days = [];
         $maxCount = 0;
 
-        for ($i = 6; $i >= 0; $i--) {
-            $date = now()->subDays($i);
-            $query = Activity::whereDate('created_at', $date->toDateString());
+        // Determine start and end dates from filters
+        $endDate = isset($filters['end_date']) ? now()->parse($filters['end_date']) : now();
+        $startDate = isset($filters['start_date']) ? now()->parse($filters['start_date']) : $endDate->copy()->subDays(6);
+
+        // Ensure we don't exceed 90 days to prevent performance issues
+        $maxDays = 90;
+        if ($startDate->diffInDays($endDate) > $maxDays) {
+            $startDate = $endDate->copy()->subDays($maxDays);
+        }
+
+        // Generate timeline data for each day in the range
+        $currentDate = $startDate->copy();
+        while ($currentDate <= $endDate) {
+            $query = Activity::whereDate('created_at', $currentDate->toDateString());
             $this->applyFilters($query, $filters);
             $count = $query->count();
 
@@ -164,11 +180,13 @@ class AnalyticsService
             }
 
             $days[] = [
-                'date' => $date->format('M j'),
-                'day_name' => $date->format('l'),
+                'date' => $currentDate->format('M j'),
+                'day_name' => $currentDate->format('l'),
                 'count' => $count,
                 'percentage' => 0 // Will be calculated below
             ];
+
+            $currentDate->addDay();
         }
 
         // Calculate percentages
@@ -261,20 +279,24 @@ class AnalyticsService
     }
 
     /**
-     * Get activity trends for the last 30 days.
+     * Get activity trends based on the provided filters.
      */
     protected function getActivityTrends(int $days = 30, array $filters = []): array
     {
-        $startDate = now()->subDays($days)->startOfDay();
-        $endDate = now()->endOfDay();
+        // Use filters if provided, otherwise fallback to default period
+        $endDate = isset($filters['end_date']) ? now()->parse($filters['end_date']) : now()->endOfDay();
+        $startDate = isset($filters['start_date']) ? now()->parse($filters['start_date']) : $endDate->copy()->subDays($days)->startOfDay();
 
         $activities = Activity::select(
                 DB::raw('DATE(created_at) as date'),
                 DB::raw('count(*) as count'),
                 'event'
-            )
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->groupBy('date', 'event')
+            );
+
+        // Apply date range and other filters
+        $this->applyFilters($activities, $filters);
+
+        $activities = $activities->groupBy('date', 'event')
             ->orderBy('date')
             ->get();
 

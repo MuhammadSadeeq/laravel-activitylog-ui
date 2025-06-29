@@ -4,6 +4,9 @@ namespace MuhammadSadeeq\ActivitylogUi\Services;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\App;
 use Maatwebsite\Excel\Facades\Excel;
 use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 use MuhammadSadeeq\ActivitylogUi\Exports\ActivitiesExport;
@@ -39,7 +42,8 @@ class ExportService
      */
     protected function getActivitiesForExport(array $filters, array $options): Collection
     {
-        $maxRecords = config('activitylog-ui.exports.max_records', 10000);
+        $maxRecords = Config::get('activitylog-ui.exports.max_records', 10000);
+        $chunkSize = Config::get('activitylog-ui.exports.chunk_size', 1000);
 
         // Don't override the limit if filters are applied - get all filtered results up to max
         if (!empty($filters)) {
@@ -50,18 +54,34 @@ class ExportService
             $limit = min($options['limit'] ?? $maxRecords, $maxRecords);
         }
 
-        // Get filtered activities - this is crucial for proper filtering
-        $activities = $this->activitylogService->getActivities($filters, $limit);
+        // Get filtered activities using chunking for memory efficiency
+        $activities = new Collection();
+
+        Activity::query()
+            ->when($filters, function ($query) use ($filters) {
+                return App::make(ActivitylogService::class)->applyFilters($query, $filters);
+            })
+            ->chunk($chunkSize, function ($chunk) use (&$activities, $limit) {
+                if ($activities->count() >= $limit) {
+                    return false;
+                }
+                $activities = $activities->concat($chunk);
+            });
+
+        // Ensure we don't exceed the limit
+        if ($activities->count() > $limit) {
+            $activities = $activities->take($limit);
+        }
 
         // Log for debugging
-        \Log::info('Getting activities for export', [
+        Log::info('Getting activities for export', [
             'filters_applied' => $filters,
             'limit_used' => $limit,
-            'total_found' => $activities->total(),
-            'collection_count' => $activities->getCollection()->count()
+            'total_found' => $activities->count(),
+            'chunk_size' => $chunkSize
         ]);
 
-        return $activities->getCollection();
+        return $activities;
     }
 
     /**

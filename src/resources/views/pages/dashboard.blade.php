@@ -66,12 +66,12 @@ Activity Log Dashboard
     <!-- Content -->
     <div class="flex flex-col lg:flex-row gap-6">
         <!-- Single Unified Filter Panel -->
-        <div class="w-full lg:w-72 xl:w-80 lg:flex-shrink-0">
+        <div x-show="currentView !== 'analytics'" class="w-full lg:w-72 xl:w-80 lg:flex-shrink-0">
             @include('activitylog-ui::components.filter-panel')
         </div>
 
         <!-- Main Content -->
-        <div class="w-full lg:flex-1 lg:min-w-0">
+        <div class="w-full lg:flex-1 lg:min-w-0" :class="{ 'lg:ml-0': currentView === 'analytics' }">
             <!-- Loading State -->
             <div x-show="loading" class="flex items-center justify-center py-12">
                 <div class="flex items-center space-x-2 text-gray-500 dark:text-gray-400">

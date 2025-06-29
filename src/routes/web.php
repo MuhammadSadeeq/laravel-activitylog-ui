@@ -73,13 +73,6 @@ Route::group([
         Route::get('recent', [ActivityLogController::class, 'recent'])
             ->name('activities.recent');
 
-        // Legacy endpoints for backward compatibility
-        Route::get('activities/data', [ActivityLogController::class, 'getData'])
-            ->name('activities.data');
-
-        Route::get('activities/search', [ActivityLogController::class, 'search'])
-            ->name('activities.search');
-
         // Analytics endpoints
         Route::get('analytics', [ActivityLogController::class, 'analytics'])
             ->name('analytics');
