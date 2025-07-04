@@ -24,7 +24,7 @@
         "logging",
         "monitoring"
     ],
-    "homepage": "https://github.com/msadeeq/laravel-activitylog-ui",
+    "homepage": "https://github.com/MuhammadSadeeq/laravel-activitylog-ui",
     "license": "MIT",
     "authors": [
         {
@@ -44,9 +44,7 @@
     },
     "require-dev": {
         "orchestra/testbench": "^8.0|^9.0|^10.0",
-        "phpunit/phpunit": "^10.1",
-        "pestphp/pest": "^2.0",
-        "pestphp/pest-plugin-laravel": "^2.0"
+        "phpunit/phpunit": "^10.1"
     },
     "autoload": {
         "psr-4": {
@@ -59,8 +57,8 @@
         }
     },
     "scripts": {
-        "test": "vendor/bin/pest",
-        "test-coverage": "vendor/bin/pest --coverage-html coverage"
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
     },
     "config": {
         "sort-packages": true
