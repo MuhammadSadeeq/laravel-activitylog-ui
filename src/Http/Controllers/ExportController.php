@@ -29,7 +29,7 @@ class ExportController extends Controller
         $this->authorize('viewActivityLogUi');
 
         $request->validate([
-            'format' => 'required|string|in:csv,xlsx,pdf,json',
+            'format' => 'required|string|in:' . implode(',', config('activitylog-ui.exports.enabled_formats')),
             'filters' => 'array',
             'options' => 'array',
         ]);

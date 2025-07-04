@@ -16,11 +16,17 @@ return [
     |--------------------------------------------------------------------------
     | Route Configuration
     |--------------------------------------------------------------------------
+    |
+    | Middleware is auto-determined:
+    | - authorization.enabled=false: ['web'] only (public access)
+    | - authorization.enabled=true: ['web', 'auth', ActivityLogAccessMiddleware]
+    | - Set custom middleware array to override auto-detection
+    |
     */
     'route' => [
         'prefix' => 'activitylog-ui',
         'name' => 'activitylog-ui.',
-        'middleware' => ['web', 'auth'],
+        'middleware' => null, // Auto-determined based on authorization.enabled, or set custom middleware
         'domain' => null,
     ],
 
@@ -28,6 +34,10 @@ return [
     |--------------------------------------------------------------------------
     | Authorization Configuration
     |--------------------------------------------------------------------------
+    |
+    | When enabled=false: No authentication required (public access)
+    | When enabled=true: Requires authentication + gate/policy checks
+    |
     */
     'authorization' => [
         'enabled' => false,
@@ -40,6 +50,11 @@ return [
     |--------------------------------------------------------------------------
     | Access Control Configuration
     |--------------------------------------------------------------------------
+    |
+    | These controls work independently of authorization.enabled:
+    | - If either allowed_users or allowed_roles is defined, authentication is required
+    | - If both are empty, access is open (public if authorization.enabled=false)
+    |
     */
     'access' => [
         // List of user emails that are allowed to access the UI
@@ -66,12 +81,9 @@ return [
         'title' => 'Activity Log',
         'brand' => 'ActivityLog UI',
         'logo' => null,
-        'theme' => 'light', // light, dark, auto
         'default_view' => 'table', // table, timeline
         'per_page_options' => [10, 25, 50, 100],
         'default_per_page' => 25,
-        'date_format' => 'Y-m-d H:i:s',
-        'timezone' => null, // Uses app timezone if null
     ],
 
     /*
@@ -82,11 +94,7 @@ return [
     'features' => [
         'analytics' => true,
         'exports' => true,
-        'real_time' => true,
         'saved_views' => true,
-        'user_profiles' => true,
-        'notifications' => true,
-        'advanced_search' => true,
     ],
 
     /*
@@ -145,18 +153,6 @@ return [
             'auto_run' => true,
         ],
 
-        // Package dependencies configuration
-        'requires_packages' => [
-            'xlsx' => 'maatwebsite/excel',
-            'pdf' => 'barryvdh/laravel-dompdf',
-        ],
-
-        // Fallback formats when required packages are missing
-        'fallbacks' => [
-            'xlsx' => 'csv',
-            'pdf' => 'json',
-        ],
-
         // Export notification settings
         'notifications' => [
             // Notify users when queued exports are complete
@@ -176,19 +172,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Real-time Configuration
-    |--------------------------------------------------------------------------
-    */
-    'realtime' => [
-        'enabled' => true,
-        'driver' => 'reverb', // reverb, pusher, redis
-        'channel' => 'activity-log-updates',
-        'refresh_interval' => 30, // seconds
-        'max_items_in_feed' => 100,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
     | Analytics Configuration
     |--------------------------------------------------------------------------
     */
@@ -200,12 +183,6 @@ return [
             'deleted' => '#ef4444',
             'custom' => '#8b5cf6',
         ],
-        'summary_widgets' => [
-            'total_activities',
-            'activities_today',
-            'top_users',
-            'popular_models',
-        ],
     ],
 
     /*
@@ -215,6 +192,7 @@ return [
     */
     'filters' => [
         'date_presets' => [
+            'all' => 'All time',
             'today' => 'Today',
             'yesterday' => 'Yesterday',
             'last_7_days' => 'Last 7 days',
@@ -223,46 +201,7 @@ return [
             'last_month' => 'Last month',
             'custom' => 'Custom range',
         ],
-        'searchable_fields' => [
-            'description',
-            'properties',
-            'causer.name',
-            'causer.email',
-            'subject.title',
-            'subject.name',
-        ],
         'max_saved_views' => 10,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Security Configuration
-    |--------------------------------------------------------------------------
-    */
-    'security' => [
-        'redact_sensitive_fields' => true,
-        'sensitive_field_patterns' => [
-            'password',
-            'token',
-            'secret',
-            'api_key',
-            'private_key',
-        ],
-        'redaction_text' => '[REDACTED]',
-        'audit_ui_access' => true,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Customization Configuration
-    |--------------------------------------------------------------------------
-    */
-    'customization' => [
-        'custom_activity_renderers' => [],
-        'custom_subject_links' => [],
-        'custom_causer_links' => [],
-        'blade_component_overrides' => [],
-        'css_framework' => 'tailwind', // tailwind, bootstrap
     ],
 
     /*
@@ -271,47 +210,7 @@ return [
     |--------------------------------------------------------------------------
     */
     'performance' => [
-        'cache_enabled' => true,
         'cache_prefix' => 'activitylog_ui',
         'eager_load_relations' => ['causer', 'subject'],
-        'index_recommendations' => [
-            'created_at',
-            'causer_type',
-            'causer_id',
-            'subject_type',
-            'subject_id',
-        ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Notification Configuration
-    |--------------------------------------------------------------------------
-    */
-    'notifications' => [
-        'enabled_channels' => ['mail', 'slack', 'discord'],
-        'rules' => [
-            // Define notification rules
-        ],
-        'slack' => [
-            'webhook_url' => env('ACTIVITYLOG_SLACK_WEBHOOK', null),
-            'channel' => '#activity-logs',
-            'username' => 'Activity Log Bot',
-        ],
-        'discord' => [
-            'webhook_url' => env('ACTIVITYLOG_DISCORD_WEBHOOK', null),
-        ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | GDPR Compliance Configuration
-    |--------------------------------------------------------------------------
-    */
-    'gdpr' => [
-        'enabled' => false,
-        'retention_days' => 365,
-        'auto_cleanup' => false,
-        'anonymize_instead_of_delete' => true,
     ],
 ];

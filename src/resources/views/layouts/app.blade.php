@@ -121,7 +121,9 @@
                     },
 
                     // Data
+                    @if(config('activitylog-ui.features.saved_views', true))
                     savedViews: [],
+                    @endif
                     availableEventTypes: [],
                     availableSubjectTypes: [
                         { value: 'User', label: 'User' },
@@ -131,16 +133,11 @@
                     availableCausers: [],
                     filteredCausers: [],
 
-                    // Date presets
-                    datePresets: [
-                        { value: 'all', label: 'All Time' },
-                        { value: 'today', label: 'Today' },
-                        { value: 'yesterday', label: 'Yesterday' },
-                        { value: 'last_7_days', label: 'Last 7 Days' },
-                        { value: 'this_month', label: 'This Month' },
-                        { value: 'last_month', label: 'Last Month' },
-                        { value: 'custom', label: 'Custom' }
-                    ],
+                    // Date presets loaded from config
+                    datePresets: {!! collect(config('activitylog-ui.filters.date_presets', []))
+                        ->map(function($label, $value) { return ['value' => $value, 'label' => $label]; })
+                        ->values()
+                        ->toJson() !!},
 
                     // Causer management
                     causerSearch: '',
@@ -151,6 +148,7 @@
                         if (this.initialized) return;
                         this.initialized = true;
 
+                        @if(config('activitylog-ui.features.saved_views', true))
                         // Load saved views
                         await this.loadSavedViews();
 
@@ -158,12 +156,18 @@
                         window.addEventListener('saved-views-updated', async () => {
                             await this.loadSavedViews();
                         });
+                        @endif
 
                         // Restore persisted state
                         this.restorePersistedState();
 
-                        this.loadCausers();
+                        await this.loadCausers();
                         this.filteredCausers = this.availableCausers;
+
+                        // Emit event that filter panel is ready with initial filters
+                        window.dispatchEvent(new CustomEvent('filter-panel-ready', {
+                            detail: this.filters
+                        }));
                     },
 
                     async loadCausers() {
@@ -199,25 +203,19 @@
 
                             this.filteredCausers = this.availableCausers;
                         } catch (error) {
-                            console.error('Failed to load causers:', error);
-                            // Keep default mock data as fallback
-                            this.availableCausers = [
-                                { id: 1, name: 'John Doe', email: 'john@example.com' },
-                                { id: 2, name: 'Jane Smith', email: 'jane@example.com' },
-                                { id: 3, name: 'Bob Johnson', email: 'bob@example.com' }
-                            ];
-                            this.filteredCausers = this.availableCausers;
+                            if (window.notify) {
+                                window.notify.error('Error', 'Failed to load filter options');
+                            }
 
-                            // Fallback event types with dynamic styling
-                            const fallbackEventTypes = ['created', 'updated', 'deleted', 'restored', 'login', 'system'];
-                            this.availableEventTypes = fallbackEventTypes.map(eventType => {
-                                return {
-                                    value: eventType,
-                                    label: eventType.charAt(0).toUpperCase() + eventType.slice(1),
-                                    color: `bg-${window.ActivityTypeStyler.getColor(eventType)}-500`,
-                                    styling: window.ActivityTypeStyler.getEventTypeStyling(eventType)
-                                };
-                            });
+                            // Set empty defaults
+                            this.availableCausers = [];
+                            this.filteredCausers = [];
+                            this.availableEventTypes = ['created', 'updated', 'deleted', 'restored'].map(eventType => ({
+                                value: eventType,
+                                label: eventType.charAt(0).toUpperCase() + eventType.slice(1),
+                                color: `bg-${window.ActivityTypeStyler.getColor(eventType)}-500`,
+                                styling: window.ActivityTypeStyler.getEventTypeStyling(eventType)
+                            }));
                         }
                     },
 
@@ -348,11 +346,13 @@
                         }
                     },
 
+                    @if(config('activitylog-ui.features.saved_views', true))
                     showSaveViewModal() {
                         window.dispatchEvent(new CustomEvent('show-save-view-modal', {
                             detail: this.filters
                         }));
                     },
+                    @endif
 
                     // Restore persisted state from localStorage
                     restorePersistedState() {
@@ -389,6 +389,7 @@
                         }
                     },
 
+                    @if(config('activitylog-ui.features.saved_views', true))
                     // Load saved views from the server
                     async loadSavedViews() {
                         try {
@@ -439,6 +440,7 @@
                             }
                         }
                     }
+                    @endif
                 }
             },
 
@@ -744,6 +746,7 @@
             }
         };
 
+        @if(config('activitylog-ui.features.saved_views', true))
         window.saveView = async function(viewName, filters) {
             if (!viewName.trim()) return;
 
@@ -779,6 +782,7 @@
                 }
             }
         };
+        @endif
     </script>
 
     @stack('head')

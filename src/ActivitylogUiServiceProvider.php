@@ -116,9 +116,8 @@ class ActivitylogUiServiceProvider extends ServiceProvider
      */
     protected function registerMiddleware(): void
     {
-        // Register any custom middleware here if needed
-        // $router = $this->app['router'];
-        // $router->aliasMiddleware('activitylog-ui', \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivitylogUiMiddleware::class);
+        $router = $this->app['router'];
+        $router->aliasMiddleware('activitylog-access', \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class);
     }
 
     /**

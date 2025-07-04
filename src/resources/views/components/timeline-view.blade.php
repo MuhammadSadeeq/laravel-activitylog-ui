@@ -25,10 +25,9 @@
                         x-model="perPage"
                         @change="currentPage = 1; loadActivities(1)"
                         class="border border-gray-300 dark:border-gray-600 rounded-md px-3 py-1 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm dark:shadow-gray-900/20">
-                    <option value="5">5 activities</option>
-                    <option value="10">10 activities</option>
-                    <option value="15">15 activities</option>
-                    <option value="20">20 activities</option>
+                    @foreach(config('activitylog-ui.ui.per_page_options', [10, 25, 50, 100]) as $option)
+                    <option value="{{ $option }}">{{ $option }} activities</option>
+                    @endforeach
                 </select>
             </div>
         </div>

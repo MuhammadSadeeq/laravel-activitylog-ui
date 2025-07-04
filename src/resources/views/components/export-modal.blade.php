@@ -5,7 +5,7 @@
         currentFilters: {},
 
         init() {
-            console.log('Export modal initialized');
+
         }
      }"
      @@show-export-modal.window="open = true; currentFilters = $event.detail?.filters || {}"
@@ -56,7 +56,9 @@
                     Choose the format for exporting your activity data. All current filters will be applied to the export.
                 </p>
 
+                @php($enabledFormats = config('activitylog-ui.exports.enabled_formats', []))
                 <div class="space-y-3">
+                    @if(in_array('xlsx', $enabledFormats))
                     <!-- Excel Export Option -->
                     <button @@click="selectedFormat = 'xlsx'; exportData('xlsx', currentFilters)"
                             :class="selectedFormat === 'xlsx' ? 'ring-2 ring-green-500 dark:ring-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
@@ -77,7 +79,9 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                         </svg>
                     </button>
+                    @endif
 
+                    @if(in_array('csv', $enabledFormats))
                     <!-- CSV Export Option -->
                     <button @@click="selectedFormat = 'csv'; exportData('csv', currentFilters)"
                             :class="selectedFormat === 'csv' ? 'ring-2 ring-blue-500 dark:ring-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
@@ -98,7 +102,9 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                         </svg>
                     </button>
+                    @endif
 
+                    @if(in_array('pdf', $enabledFormats))
                     <!-- PDF Export Option -->
                     <button @@click="selectedFormat = 'pdf'; exportData('pdf', currentFilters)"
                             :class="selectedFormat === 'pdf' ? 'ring-2 ring-red-500 dark:ring-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
@@ -119,7 +125,9 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                         </svg>
                     </button>
+                    @endif
 
+                    @if(in_array('json', $enabledFormats))
                     <!-- JSON Export Option -->
                     <button @@click="selectedFormat = 'json'; exportData('json', currentFilters)"
                             :class="selectedFormat === 'json' ? 'ring-2 ring-purple-500 dark:ring-purple-400 bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800' : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
@@ -140,6 +148,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                         </svg>
                     </button>
+                    @endif
                 </div>
 
                 <!-- Active Filters Display -->

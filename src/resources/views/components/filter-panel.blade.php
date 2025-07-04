@@ -24,8 +24,7 @@
          });
          $watch('selectedCauser', value => {
              localStorage.setItem('activitylog_selected_causer', JSON.stringify(value || null));
-         });
-         $nextTick(() => applyFilters());"
+         });"
      @clear-filters.window="clearAllFilters()"
      class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
 
@@ -126,6 +125,7 @@
                 </button>
 
                 <!-- Saved Views (Ultra Compact) -->
+                @if(config('activitylog-ui.features.saved_views', true))
                 <div x-data="{ open: false }" class="relative">
                     <button @click="open = !open"
                             class="inline-flex items-center justify-center p-1 border border-gray-300 dark:border-gray-600 shadow-sm rounded text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
@@ -176,6 +176,7 @@
                         </div>
                     </div>
                 </div>
+                @endif
             </div>
 
             <!-- Icon-Only Button Group (lg to xl) - Medium Screens -->
@@ -200,6 +201,7 @@
                 </button>
 
                 <!-- Saved Views (Icon Only) -->
+                @if(config('activitylog-ui.features.saved_views', true))
                 <div x-data="{ open: false }" class="relative">
                     <button @click="open = !open"
                             class="inline-flex items-center justify-center p-1.5 border border-gray-300 dark:border-gray-600 shadow-sm rounded text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
@@ -250,11 +252,13 @@
                         </div>
                     </div>
                 </div>
+                @endif
             </div>
 
             <!-- Compact Button Group (xl and up) - MacBook Pro 13" -->
             <div class="hidden xl:flex items-center space-x-1.5">
                 <!-- Saved Views -->
+                @if(config('activitylog-ui.features.saved_views', true))
                 <div x-data="{ open: false }" class="relative">
                     <button @click="open = !open"
                             class="inline-flex items-center px-2 py-1.5 border border-gray-300 dark:border-gray-600 shadow-sm text-xs rounded text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors">
@@ -308,6 +312,7 @@
                         </div>
                     </div>
                 </div>
+                @endif
 
                 <!-- Toggle Filters -->
                 <button @click="expanded = !expanded"
@@ -351,6 +356,7 @@
                 </button>
 
                 <!-- Saved Views (Small Screen) -->
+                @if(config('activitylog-ui.features.saved_views', true))
                 <div x-data="{ open: false }" class="relative">
                     <button @click="open = !open"
                             class="inline-flex items-center justify-center p-1.5 border border-gray-300 dark:border-gray-600 shadow-sm rounded text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
@@ -401,6 +407,7 @@
                         </div>
                     </div>
                 </div>
+                @endif
             </div>
 
             <!-- Mobile Button Group -->
@@ -446,6 +453,7 @@
                          class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 dark:ring-white dark:ring-opacity-10 focus:outline-none z-20">
                         <div class="py-1">
                             <!-- Saved Views Section -->
+                            @if(config('activitylog-ui.features.saved_views', true))
                             <div class="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                                 Saved Views
                             </div>
@@ -480,6 +488,7 @@
                                     Save Current View
                                 </button>
                             </div>
+                            @endif
                         </div>
                     </div>
                 </div>

@@ -7,7 +7,19 @@ use MuhammadSadeeq\ActivitylogUi\Http\Controllers\ExportController;
 $config = config('activitylog-ui.route', []);
 $prefix = $config['prefix'] ?? 'activitylog-ui';
 $name = $config['name'] ?? 'activitylog-ui.';
-$middleware = $config['middleware'] ?? ['web', 'auth'];
+
+// Build middleware based on authorization configuration
+$middleware = ['web'];
+if (config('activitylog-ui.authorization.enabled', false)) {
+    $middleware[] = 'auth';
+    $middleware[] = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
+}
+
+// Allow custom middleware override if provided
+if (isset($config['middleware'])) {
+    $middleware = $config['middleware'];
+}
+
 $domain = $config['domain'] ?? null;
 
 Route::group([
@@ -20,33 +32,6 @@ Route::group([
     // Main dashboard route
     Route::get('/', [ActivityLogController::class, 'index'])
         ->name('dashboard');
-
-    // Debug route to check if package is working
-    Route::get('/debug', function() {
-        try {
-            $activityCount = \MuhammadSadeeq\ActivitylogUi\Models\Activity::count();
-            $recentActivities = \MuhammadSadeeq\ActivitylogUi\Models\Activity::latest()->limit(5)->get();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'ActivityLog UI is working!',
-                'data' => [
-                    'total_activities' => $activityCount,
-                    'recent_activities' => $recentActivities,
-                    'config' => [
-                        'table_name' => config('activitylog.table_name', 'activity_log'),
-                        'database_connection' => config('activitylog.database_connection'),
-                    ]
-                ]
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-                'trace' => config('app.debug') ? $e->getTraceAsString() : 'Enable debug mode for full trace'
-            ], 500);
-        }
-    })->name('debug');
 
     // Activity log data endpoints
     Route::prefix('api')->as('api.')->group(function () {
@@ -83,15 +68,17 @@ Route::group([
         Route::get('users/{userId}/profile', [ActivityLogController::class, 'userProfile'])
             ->name('users.profile');
 
-        // Saved views endpoints
-        Route::get('views', [ActivityLogController::class, 'getSavedViews'])
-            ->name('views.index');
+        // Saved views endpoints (only if feature is enabled)
+        if (config('activitylog-ui.features.saved_views', true)) {
+            Route::get('views', [ActivityLogController::class, 'getSavedViews'])
+                ->name('views.index');
 
-        Route::post('views', [ActivityLogController::class, 'saveView'])
-            ->name('views.save');
+            Route::post('views', [ActivityLogController::class, 'saveView'])
+                ->name('views.save');
 
-        Route::delete('views', [ActivityLogController::class, 'deleteView'])
-            ->name('views.delete');
+            Route::delete('views', [ActivityLogController::class, 'deleteView'])
+                ->name('views.delete');
+        }
 
         // Export endpoints
         Route::post('export', [ExportController::class, 'export'])

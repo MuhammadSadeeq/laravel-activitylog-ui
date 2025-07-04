@@ -1,7 +1,7 @@
 @extends('activitylog-ui::layouts.app')
 
 @section('title')
-Activity Log Dashboard
+{{ config('activitylog-ui.ui.title', 'Activity Log') }} Dashboard
 @endsection
 
 @section('content')
@@ -9,7 +9,7 @@ Activity Log Dashboard
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-            <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Activity Log</h2>
+            <h2 class="text-2xl font-bold text-gray-900 dark:text-white">{{ config('activitylog-ui.ui.title', 'Activity Log') }}</h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Monitor and analyze all system activities</p>
 
             <!-- Context indicator for pagination state -->
@@ -26,6 +26,7 @@ Activity Log Dashboard
         <!-- View Switcher & Export -->
         <div class="mt-4 sm:mt-0 flex items-center space-x-4">
             <!-- Export Button -->
+            @if(config('activitylog-ui.features.exports', true))
             <button @click="exportActivities()"
                     class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,6 +34,7 @@ Activity Log Dashboard
                 </svg>
                 Export
             </button>
+            @endif
 
             <div class="flex rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1">
                     <button @click="switchView('table')"
@@ -51,6 +53,7 @@ Activity Log Dashboard
                         </svg>
                     Timeline
                     </button>
+                    @if(config('activitylog-ui.features.analytics', true))
                     <button @click="switchView('analytics')"
                         :class="currentView === 'analytics' ? 'bg-blue-500 text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
                         class="flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ml-1">
@@ -59,6 +62,7 @@ Activity Log Dashboard
                         </svg>
                         Analytics
                 </button>
+                @endif
             </div>
         </div>
     </div>
@@ -93,16 +97,22 @@ Activity Log Dashboard
             </div>
 
             <!-- Analytics View -->
+            @if(config('activitylog-ui.features.analytics', true))
             <div x-show="currentView === 'analytics' && !loading">
                 @include('activitylog-ui::components.analytics-dashboard')
             </div>
+            @endif
         </div>
     </div>
 
     <!-- Modals -->
     @include('activitylog-ui::components.activity-detail-modal')
+    @if(config('activitylog-ui.features.exports', true))
     @include('activitylog-ui::components.export-modal')
+    @endif
+    @if(config('activitylog-ui.features.saved_views', true))
     @include('activitylog-ui::components.save-view-modal')
+    @endif
 </div>
 @endsection
 
@@ -110,26 +120,20 @@ Activity Log Dashboard
 <script>
 function activityDashboard() {
     return {
-        // Initialization state
+        // State
         initialized: false,
-
-        // View state
-        currentView: 'table',
+        currentView: '{{ $view }}',
         loading: false,
-
-        // Data
         activities: [],
         totalActivities: 0,
         currentPage: 1,
-        perPage: 15,
+        perPage: {{ config('activitylog-ui.ui.default_per_page', 25) }},
         totalPages: 1,
-
-        // Modal states
         showExportModal: false,
+        @if(config('activitylog-ui.features.saved_views', true))
         showSaveViewModal: false,
+        @endif
         selectedActivity: null,
-
-        // Filters (from filter panel)
         currentFilters: {},
 
         init() {
@@ -137,9 +141,7 @@ function activityDashboard() {
             if (this.initialized) return;
             this.initialized = true;
 
-            this.loadActivities();
-
-            // Use unique event listeners to prevent duplicates
+            // Initialize event listeners first
             this.filterChangedHandler = (event) => {
                 this.currentFilters = event.detail;
                 this.currentPage = 1; // Reset to first page
@@ -159,27 +161,41 @@ function activityDashboard() {
                 this.selectedActivity = event.detail;
             };
 
+            @if(config('activitylog-ui.features.saved_views', true))
             this.showSaveViewModalHandler = (event) => {
                 this.showSaveViewModal = true;
             };
+            @endif
 
             // Remove any existing listeners first
             window.removeEventListener('filter-changed', this.filterChangedHandler);
             window.removeEventListener('show-export-modal', this.showExportModalHandler);
             window.removeEventListener('show-activity-detail', this.showActivityDetailHandler);
+            @if(config('activitylog-ui.features.saved_views', true))
             window.removeEventListener('show-save-view-modal', this.showSaveViewModalHandler);
+            @endif
+            window.removeEventListener('filter-panel-ready', this.filterChangedHandler);
 
             // Add event listeners
             window.addEventListener('filter-changed', this.filterChangedHandler);
             window.addEventListener('show-export-modal', this.showExportModalHandler);
             window.addEventListener('show-activity-detail', this.showActivityDetailHandler);
+            @if(config('activitylog-ui.features.saved_views', true))
             window.addEventListener('show-save-view-modal', this.showSaveViewModalHandler);
+            @endif
+            window.addEventListener('filter-panel-ready', this.filterChangedHandler);
+
+            // Load initial data based on the default view
+            if (this.currentView === 'analytics') {
+                this.reloadAnalytics();
+            } else {
+                this.loadActivities();
+            }
         },
 
         async loadActivities(page = 1) {
             // Prevent multiple simultaneous calls
             if (this.loading) {
-                console.log('Already loading, skipping duplicate call');
                 return;
             }
 
@@ -217,9 +233,9 @@ function activityDashboard() {
                     }
                 });
 
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
 
                 const result = await response.json();
 
@@ -232,15 +248,14 @@ function activityDashboard() {
                 }
 
             } catch (error) {
-                    console.error('Error loading activities:', error);
-                    this.activities = [];
+                this.activities = [];
                 this.totalActivities = 0;
 
                 if (window.notify) {
                     window.notify.error('Error', 'Failed to load activities');
                 }
             } finally {
-                    this.loading = false;
+                this.loading = false;
             }
         },
 

@@ -4,9 +4,9 @@ namespace MuhammadSadeeq\ActivitylogUi\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Log;
 use MuhammadSadeeq\ActivitylogUi\Services\ActivitylogService;
 use MuhammadSadeeq\ActivitylogUi\Services\AnalyticsService;
 
@@ -49,8 +49,10 @@ class ActivityLogController extends Controller
             'date_presets' => config('activitylog-ui.filters.date_presets', []),
         ];
 
-        // Get saved views
-        $savedViews = $this->activitylogService->getSavedViews($request->user()?->id);
+        // Get saved views (only if feature is enabled)
+        $savedViews = config('activitylog-ui.features.saved_views', true)
+            ? $this->activitylogService->getSavedViews($request->user()?->id)
+            : [];
 
         return view('activitylog-ui::pages.dashboard', compact(
             'data',
@@ -70,8 +72,8 @@ class ActivityLogController extends Controller
         $this->authorize('viewActivityLogUi');
 
         $filters = $this->getFiltersFromRequest($request);
-        $view = $request->get('view', 'table');
-        $perPage = $request->get('per_page', 25);
+        $view = $request->get('view', config('activitylog-ui.ui.default_view', 'table'));
+        $perPage = $request->get('per_page', config('activitylog-ui.ui.default_per_page', 25));
 
         if ($view === 'timeline') {
             $data = $this->activitylogService->getTimelineActivities($filters, $perPage);
@@ -138,6 +140,13 @@ class ActivityLogController extends Controller
     {
         $this->authorize('viewActivityLogUi');
 
+        if (!config('activitylog-ui.features.saved_views', true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Saved views feature is disabled.',
+            ], 403);
+        }
+
         $request->validate([
             'name' => 'required|string|max:100',
             'filters' => 'required|array',
@@ -162,6 +171,13 @@ class ActivityLogController extends Controller
     public function deleteView(Request $request): JsonResponse
     {
         $this->authorize('viewActivityLogUi');
+
+        if (!config('activitylog-ui.features.saved_views', true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Saved views feature is disabled.',
+            ], 403);
+        }
 
         $request->validate([
             'view_id' => 'required|string',
@@ -308,7 +324,7 @@ class ActivityLogController extends Controller
             ]);
         } catch (\Exception $e) {
             // Log the error for debugging
-            \Log::error('ActivityLog API Error: ' . $e->getMessage(), [
+            Log::error('ActivityLog API Error: ' . $e->getMessage(), [
                 'filters' => $filters ?? null,
                 'trace' => $e->getTraceAsString()
             ]);
@@ -452,6 +468,13 @@ class ActivityLogController extends Controller
     public function getSavedViews(Request $request): JsonResponse
     {
         $this->authorize('viewActivityLogUi');
+
+        if (!config('activitylog-ui.features.saved_views', true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Saved views feature is disabled.',
+            ], 403);
+        }
 
         try {
             $views = $this->activitylogService->getSavedViews($request->user()?->id);
