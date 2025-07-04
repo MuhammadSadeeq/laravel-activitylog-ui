@@ -144,3 +144,6 @@ PRs and issues are welcome!
 ## 📝 License
 
 The MIT License (MIT).  See `LICENSE` for details. 
+
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/muhammadsadeeq/laravel-activitylog-ui.svg?style=flat-square)](https://packagist.org/packages/muhammadsadeeq/laravel-activitylog-ui)
+[![Total Downloads](https://img.shields.io/packagist/dt/muhammadsadeeq/laravel-activitylog-ui.svg?style=flat-square)](https://packagist.org/packages/muhammadsadeeq/laravel-activitylog-ui)
