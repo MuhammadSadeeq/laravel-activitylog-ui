@@ -75,34 +75,7 @@ class ActivitylogUiServiceProvider extends ServiceProvider
         });
 
         // Register publishable resources
-        if ($this->app->runningInConsole()) {
-            $this->publishes([
-                __DIR__ . '/config/activitylog-ui.php' => config_path('activitylog-ui.php'),
-            ], 'activitylog-ui-config');
-
-            $this->publishes([
-                __DIR__ . '/resources/views' => resource_path('views/vendor/activitylog-ui'),
-            ], 'activitylog-ui-views');
-
-            // Publish images (logo, favicon, etc.)
-            $this->publishes([
-                __DIR__ . '/resources/images' => public_path('vendor/activitylog-ui/images'),
-            ], 'activitylog-ui-assets');
-
-            // Publish CSS assets if they exist
-            if (is_dir(__DIR__ . '/resources/css')) {
-                $this->publishes([
-                    __DIR__ . '/resources/css' => public_path('vendor/activitylog-ui/css'),
-                ], 'activitylog-ui-assets');
-            }
-
-            // Publish JS assets if they exist
-            if (is_dir(__DIR__ . '/resources/js')) {
-                $this->publishes([
-                    __DIR__ . '/resources/js' => public_path('vendor/activitylog-ui/js'),
-                ], 'activitylog-ui-assets');
-            }
-        }
+        $this->registerPublishing();
 
         // Register middleware if needed
         $this->registerMiddleware();
@@ -130,6 +103,43 @@ class ActivitylogUiServiceProvider extends ServiceProvider
             // $this->commands([
             //     \MuhammadSadeeq\ActivitylogUi\Console\Commands\InstallCommand::class,
             // ]);
+        }
+    }
+
+    /**
+     * Register publishable resources.
+     */
+    protected function registerPublishing(): void
+    {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
+        $this->publishes([
+            __DIR__ . '/config/activitylog-ui.php' => config_path('activitylog-ui.php'),
+        ], 'activitylog-ui-config');
+
+        $this->publishes([
+            __DIR__ . '/resources/views' => resource_path('views/vendor/activitylog-ui'),
+        ], 'activitylog-ui-views');
+
+        // Publish images (logo, favicon, etc.)
+        $this->publishes([
+            __DIR__ . '/resources/images' => public_path('vendor/activitylog-ui/images'),
+        ], 'activitylog-ui-assets');
+
+        // Publish CSS assets if they exist
+        if (is_dir(__DIR__ . '/resources/css')) {
+            $this->publishes([
+                __DIR__ . '/resources/css' => public_path('vendor/activitylog-ui/css'),
+            ], 'activitylog-ui-assets');
+        }
+
+        // Publish JS assets if they exist
+        if (is_dir(__DIR__ . '/resources/js')) {
+            $this->publishes([
+                __DIR__ . '/resources/js' => public_path('vendor/activitylog-ui/js'),
+            ], 'activitylog-ui-assets');
         }
     }
 }

@@ -676,8 +676,8 @@
                 </label>
                 <select x-model="filters.subject_type"
                         @change="applyFilters()"
-                        class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
-                    <option value="">All types</option>
+                        class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm min-w-[200px]">
+                    <option value="">All Types</option>
                     <template x-for="subjectType in availableSubjectTypes" :key="subjectType.value">
                         <option :value="subjectType.value" x-text="subjectType.label"></option>
                     </template>
