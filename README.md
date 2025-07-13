@@ -8,6 +8,12 @@
 
 ---
 
+## 📖 Documentation
+
+📚 **[Complete Documentation](https://www.sadeeq.dev/docs/laravel-activitylog-ui)** - Comprehensive guide with advanced features, customization options, and troubleshooting.
+
+---
+
 ## ✨ Features
 
 * Table, Timeline & Analytics dashboards
