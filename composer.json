@@ -1,6 +1,7 @@
 {
     "name": "aliw1382/laravel-activitylog-ui",
     "description": "A beautiful, modern UI for Spatie's Activity Log with advanced filtering, analytics, and real-time features.",
+    "verstion":"1.1.0",
     "keywords": [
         "spatie",
         "laravel-activitylog",
