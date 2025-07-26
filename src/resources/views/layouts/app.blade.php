@@ -877,14 +877,57 @@
 
                         <!-- User menu -->
                         @auth
-                            <div class="flex items-center space-x-3">
-                                <span class="text-sm text-gray-700 dark:text-gray-300">
-                                    {{ auth()->user()->name ?? auth()->user()->email }}
-                                </span>
-                                <div class="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
-                                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        {{ substr(auth()->user()->name ?? auth()->user()->email, 0, 1) }}
+                            <div class="relative" x-data="{ open: false }">
+                                <button @click="open = !open"
+                                        @click.away="open = false"
+                                        class="flex items-center space-x-3 p-2 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors">
+                                    <span class="text-sm">
+                                        {{ auth()->user()->name ?? auth()->user()->email }}
                                     </span>
+                                    <div class="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
+                                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                            {{ substr(auth()->user()->name ?? auth()->user()->email, 0, 1) }}
+                                        </span>
+                                    </div>
+                                    <svg class="w-4 h-4 transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
+                                </button>
+
+                                <!-- Dropdown menu -->
+                                <div x-show="open"
+                                     x-transition:enter="transition ease-out duration-100"
+                                     x-transition:enter-start="transform opacity-0 scale-95"
+                                     x-transition:enter-end="transform opacity-100 scale-100"
+                                     x-transition:leave="transition ease-in duration-75"
+                                     x-transition:leave-start="transform opacity-100 scale-100"
+                                     x-transition:leave-end="transform opacity-0 scale-95"
+                                     class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 dark:ring-white dark:ring-opacity-10 z-50">
+                                    <div class="py-1">
+                                        <!-- User info -->
+                                        <div class="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
+                                            <p class="text-sm font-medium text-gray-900 dark:text-white">
+                                                {{ auth()->user()->name ?? 'User' }}
+                                            </p>
+                                            <p class="text-sm text-gray-500 dark:text-gray-400">
+                                                {{ auth()->user()->email }}
+                                            </p>
+                                        </div>
+
+                                        <!-- Logout button -->
+                                        <form method="POST" action="{{ route('logout') }}" class="block">
+                                            @csrf
+                                            <button type="submit"
+                                                    class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:bg-gray-100 dark:focus:bg-gray-700 transition-colors">
+                                                <div class="flex items-center">
+                                                    <svg class="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                                                    </svg>
+                                                    Sign out
+                                                </div>
+                                            </button>
+                                        </form>
+                                    </div>
                                 </div>
                             </div>
                         @endauth
