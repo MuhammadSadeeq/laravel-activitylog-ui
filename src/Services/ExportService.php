@@ -178,7 +178,7 @@ class ExportService
                 'total_records' => $activities->count(),
                 'filters_applied' => $options['applied_filters'] ?? [],
                 'export_options' => $options,
-                'version' => '1.0',
+                'version' => \MuhammadSadeeq\ActivitylogUi\ActivitylogUiServiceProvider::VERSION,
             ],
             'activities' => $activities->map(function ($activity) {
                 return [

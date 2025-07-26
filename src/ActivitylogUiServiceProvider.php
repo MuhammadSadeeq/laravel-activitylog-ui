@@ -8,6 +8,10 @@ use Illuminate\Support\ServiceProvider;
 class ActivitylogUiServiceProvider extends ServiceProvider
 {
     /**
+     * Package version.
+     */
+    public const VERSION = '1.1.0';
+    /**
      * Register any application services.
      */
     public function register(): void
