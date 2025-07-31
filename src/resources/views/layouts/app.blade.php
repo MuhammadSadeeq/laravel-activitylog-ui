@@ -125,11 +125,7 @@
                     savedViews: [],
                     @endif
                     availableEventTypes: [],
-                    availableSubjectTypes: [
-                        { value: 'User', label: 'User' },
-                        { value: 'Post', label: 'Post' },
-                        { value: 'Product', label: 'Product' }
-                    ],
+                    availableSubjectTypes: [],
                     availableCausers: [],
                     filteredCausers: [],
 
