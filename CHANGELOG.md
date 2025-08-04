@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-08-04
+
+### Performance
+- Optimized database queries by changing sorting from `created_at` to `id` for faster loading in large databases
+- Improved performance for activity listing, recent activities, and related activities queries
+
 ## [1.1.0] - 2025-07-26
 
 ### Added

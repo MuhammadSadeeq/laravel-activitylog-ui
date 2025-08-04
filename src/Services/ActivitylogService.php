@@ -17,7 +17,7 @@ class ActivitylogService
     {
         $query = Activity::query()
             ->with(config('activitylog-ui.performance.eager_load_relations', ['causer', 'subject']))
-            ->latest('created_at');
+            ->latest('id');
 
         $query = $this->applyFilters($query, $filters);
 
@@ -413,7 +413,7 @@ class ActivitylogService
         return Activity::with(['causer', 'subject'])
             ->recent($hours)
             ->limit($limit)
-            ->latest()
+            ->latest('id')
             ->get();
     }
 
@@ -589,7 +589,7 @@ class ActivitylogService
         $query = Activity::where('subject_type', $subjectType)
             ->where('subject_id', $subjectId)
             ->with(['causer'])
-            ->orderBy('created_at', 'desc')
+            ->orderBy('id', 'desc')
             ->take(10);
 
         if ($excludeId) {
