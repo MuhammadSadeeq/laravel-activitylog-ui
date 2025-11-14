@@ -470,7 +470,7 @@ class ActivitylogService
     /**
      * Save a view configuration for later use.
      */
-    public function saveView(array $filters, string $name, ?int $userId = null): array
+    public function saveView(array $filters, string $name, string|int|null $userId = null): array
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".saved_views.{$userId}";
         $savedViews = Cache::get($cacheKey, []);
@@ -498,7 +498,7 @@ class ActivitylogService
     /**
      * Get saved views for a user.
      */
-    public function getSavedViews(?int $userId = null): array
+    public function getSavedViews(string|int|null $userId = null): array
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".saved_views.{$userId}";
         return Cache::get($cacheKey, []);
@@ -507,7 +507,7 @@ class ActivitylogService
     /**
      * Delete a saved view.
      */
-    public function deleteSavedView(string $viewId, ?int $userId = null): bool
+    public function deleteSavedView(string $viewId, string|int|null $userId = null): bool
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".saved_views.{$userId}";
         $savedViews = Cache::get($cacheKey, []);
