@@ -23,7 +23,7 @@ class Activity extends SpatieActivity
      */
     public function causer(): MorphTo
     {
-        return $this->morphTo()->withDefault();
+        return $this->morphTo()->withoutGlobalScopes()->withDefault();
     }
 
     /**
