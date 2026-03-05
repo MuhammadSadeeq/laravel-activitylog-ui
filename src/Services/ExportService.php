@@ -98,12 +98,12 @@ class ExportService
 
         // Write header
         if (!empty($csvData)) {
-            fputcsv($handle, array_keys($csvData[0]));
+            fputcsv($handle, array_keys($csvData[0]), ',', '"', '\\');
         }
 
         // Write data
         foreach ($csvData as $row) {
-            fputcsv($handle, $row);
+            fputcsv($handle, $row, ',', '"', '\\');
         }
 
         fclose($handle);
