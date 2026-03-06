@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-06
+
+### Added
+- Added batch UUID filtering across the activity list and analytics dashboard
+- Added a dedicated Batch UUID filter input with saved filter state
+- Added clickable batch badges in the table view for quick drill-down into related activity batches
+
+### Fixed
+- Fixed `causer_id` and `subject_id` filtering to support both string and integer identifiers
+- Fixed activity causer resolution to exclude global scopes when loading related users
+- Fixed PHP 8.4 warnings in the export service
+
 ## [1.2.0] - 2025-08-04
 
 ### Performance
