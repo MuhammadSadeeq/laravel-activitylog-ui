@@ -315,6 +315,24 @@ function activityDashboard() {
             return new Date(dateString).toLocaleString();
         },
 
+        truncateBatchUuid(batchUuid) {
+            if (!batchUuid || batchUuid.length <= 16) {
+                return batchUuid || '';
+            }
+
+            return `${batchUuid.slice(0, 8)}...${batchUuid.slice(-4)}`;
+        },
+
+        filterByBatchUuid(batchUuid) {
+            if (!batchUuid) {
+                return;
+            }
+
+            window.dispatchEvent(new CustomEvent('set-batch-filter', {
+                detail: { batch_uuid: batchUuid }
+            }));
+        },
+
         // Load more activities for timeline view
         async loadMoreActivities() {
             if (this.currentView !== 'timeline' || this.loading || this.currentPage >= this.totalPages) {

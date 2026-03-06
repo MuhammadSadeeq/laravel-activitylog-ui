@@ -5,6 +5,7 @@ namespace MuhammadSadeeq\ActivitylogUi\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 use Illuminate\Routing\Controller;
 use MuhammadSadeeq\ActivitylogUi\Services\ActivitylogService;
@@ -208,13 +209,11 @@ class ActivityLogController extends Controller
             ], 403);
         }
 
-        // Get period or custom date range
-        $filters = [];
+        // Reuse standard filter parsing so analytics stays consistent with other views.
+        $filters = $this->getFiltersFromRequest($request);
 
-        if ($request->has('start_date') && $request->has('end_date')) {
-            $filters['start_date'] = $request->get('start_date');
-            $filters['end_date'] = $request->get('end_date');
-        } else {
+        // Keep existing behavior: if dates are not fully provided, derive from period.
+        if (empty($filters['start_date']) || empty($filters['end_date'])) {
             $period = $request->get('period', 'today');
 
             if ($period === 'today') {
@@ -517,6 +516,7 @@ class ActivityLogController extends Controller
             'causer_id' => $this->sanitizeId($request->get('causer_id')),
             'subject_type' => $request->get('subject_type'),
             'subject_id' => $this->sanitizeId($request->get('subject_id')),
+            'batch_uuid' => $this->sanitizeUuid($request->get('batch_uuid')),
             'event_types' => $this->getArrayFromRequest($request, 'event_types'),
             'property_key' => $request->get('property_key'),
         ];
@@ -554,6 +554,21 @@ class ActivityLogController extends Controller
         }
 
         return null;
+    }
+
+    private function sanitizeUuid(mixed $uuid): ?string
+    {
+        if (! is_string($uuid)) {
+            return null;
+        }
+
+        $uuid = trim($uuid);
+
+        if ($uuid === '' || ! Str::isUuid($uuid)) {
+            return null;
+        }
+
+        return $uuid;
     }
 
     /**

@@ -6,10 +6,12 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use MuhammadSadeeq\ActivitylogUi\Concerns\FiltersBatchUuid;
 use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 
 class ActivitylogService
 {
+    use FiltersBatchUuid;
     /**
      * Get filtered activities with pagination.
      */
@@ -70,6 +72,10 @@ class ActivitylogService
         // Event type filters
         if (!empty($filters['event_types']) && is_array($filters['event_types'])) {
             $query->byEventTypes($filters['event_types']);
+        }
+
+        if (! empty($filters['batch_uuid'])) {
+            $this->applyBatchUuidFilter($query, $filters['batch_uuid']);
         }
 
         // Property filters

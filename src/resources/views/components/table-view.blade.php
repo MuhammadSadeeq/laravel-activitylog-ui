@@ -40,6 +40,9 @@
                     <th class="hidden md:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                         Subject
                     </th>
+                    <th class="hidden xl:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        Batch
+                    </th>
                     <th class="hidden sm:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                         User
                     </th>
@@ -74,6 +77,14 @@
                                 <div class="sm:hidden mt-1 text-xs text-gray-500 dark:text-gray-400">
                                     <span class="font-medium" x-text="activity.subject_type"></span><span class="text-gray-400 dark:text-gray-500">#</span><span x-text="activity.subject_id"></span>
                                     <span x-show="activity.causer" class="text-gray-400 dark:text-gray-500"> • </span><span x-show="activity.causer" x-text="activity.causer?.name || 'Unknown'"></span>
+                                    <template x-if="activity.batch_uuid">
+                                        <div class="mt-1">
+                                            <button @click="filterByBatchUuid(activity.batch_uuid)"
+                                                    class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors">
+                                                Batch: <span class="ml-1" x-text="truncateBatchUuid(activity.batch_uuid)"></span>
+                                            </button>
+                                        </div>
+                                    </template>
                                 </div>
                             </div>
                         </td>
@@ -84,6 +95,18 @@
                                 <span class="font-medium text-gray-900 dark:text-gray-100" x-text="activity.subject_type"></span>
                                 <span class="text-gray-500 dark:text-gray-400">#<span x-text="activity.subject_id"></span></span>
                             </div>
+                        </td>
+
+                        <!-- Batch UUID (hidden on medium screens) -->
+                        <td class="hidden xl:table-cell px-3 sm:px-6 py-4 whitespace-nowrap">
+                            <template x-if="activity.batch_uuid">
+                                <button @click="filterByBatchUuid(activity.batch_uuid)"
+                                        class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors"
+                                        :title="activity.batch_uuid">
+                                    <span x-text="truncateBatchUuid(activity.batch_uuid)"></span>
+                                </button>
+                            </template>
+                            <span x-show="!activity.batch_uuid" class="text-xs text-gray-400 dark:text-gray-500">-</span>
                         </td>
 
                         <!-- User (hidden on small mobile) -->

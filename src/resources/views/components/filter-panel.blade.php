@@ -22,10 +22,14 @@
          $watch('filters.subject_type', value => {
              localStorage.setItem('activitylog_subject_type', value || '');
          });
+         $watch('filters.batch_uuid', value => {
+             localStorage.setItem('activitylog_batch_uuid', value || '');
+         });
          $watch('selectedCauser', value => {
              localStorage.setItem('activitylog_selected_causer', JSON.stringify(value || null));
          });"
      @clear-filters.window="clearAllFilters()"
+     @set-batch-filter.window="setBatchFilter($event.detail?.batch_uuid)"
      class="bg-white dark:bg-gray-800 rounded-lg shadow-sm">
 
     <!-- Delete Confirmation Modal -->
@@ -684,7 +688,18 @@
                 </select>
             </div>
 
-            <!-- Additional advanced filters can be added here -->
+            <!-- Batch UUID -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Batch UUID
+                </label>
+                <input type="text"
+                       x-model="filters.batch_uuid"
+                       @input.debounce.300ms="applyFilters()"
+                       placeholder="e.g. 91e74616-c8f0-46de-bd9d-8f2f04b5a7ce"
+                       class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Enter a full UUID to filter one batch.</p>
+            </div>
 
         </div>
     </div>

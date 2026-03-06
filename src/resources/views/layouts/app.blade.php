@@ -109,16 +109,21 @@
                     expanded: true,
                     showAdvanced: false,
 
-                    // Filter state
-                    filters: {
-                        search: '',
-                        date_preset: 'all',
-                        start_date: '',
-                        end_date: '',
-                        event_types: [],
-                        causer_id: null,
-                        subject_type: ''
+                    defaultFilters() {
+                        return {
+                            search: '',
+                            date_preset: 'all',
+                            start_date: '',
+                            end_date: '',
+                            event_types: [],
+                            causer_id: null,
+                            subject_type: '',
+                            batch_uuid: '',
+                        };
                     },
+
+                    // Filter state
+                    filters: this.defaultFilters(),
 
                     // Data
                     @if(config('activitylog-ui.features.saved_views', true))
@@ -317,29 +322,35 @@
                         localStorage.removeItem('activitylog_event_types');
                         localStorage.removeItem('activitylog_causer_id');
                         localStorage.removeItem('activitylog_subject_type');
+                        localStorage.removeItem('activitylog_batch_uuid');
                         localStorage.removeItem('activitylog_selected_causer');
 
                         // Reset filters
-                        this.filters = {
-                            search: '',
-                            date_preset: 'all',
-                            start_date: '',
-                            end_date: '',
-                            event_types: [],
-                            causer_id: null,
-                            subject_type: ''
-                        };
+                        this.filters = this.defaultFilters();
                         this.selectedCauser = null;
                         this.causerSearch = '';
                         this.applyFilters();
                     },
 
                     loadSavedView(view) {
-                        this.filters = { ...view.filters };
+                        this.filters = {
+                            ...this.defaultFilters(),
+                            ...(view.filters || {}),
+                        };
                         this.applyFilters();
                         if (window.notify) {
                             window.notify.success('View Loaded', `Loaded "${view.name}" view`);
                         }
+                    },
+
+                    setBatchFilter(batchUuid) {
+                        if (!batchUuid) {
+                            return;
+                        }
+
+                        this.showAdvanced = true;
+                        this.filters.batch_uuid = batchUuid;
+                        this.applyFilters();
                     },
 
                     @if(config('activitylog-ui.features.saved_views', true))
@@ -359,6 +370,7 @@
                         const savedEventTypes = localStorage.getItem('activitylog_event_types');
                         const savedCauserId = localStorage.getItem('activitylog_causer_id');
                         const savedSubjectType = localStorage.getItem('activitylog_subject_type');
+                        const savedBatchUuid = localStorage.getItem('activitylog_batch_uuid');
                         const savedSelectedCauser = localStorage.getItem('activitylog_selected_causer');
 
                         if (savedPreset) this.filters.date_preset = savedPreset;
@@ -366,6 +378,7 @@
                         if (savedEndDate) this.filters.end_date = savedEndDate;
                         if (savedSearch) this.filters.search = savedSearch;
                         if (savedSubjectType) this.filters.subject_type = savedSubjectType;
+                        if (savedBatchUuid) this.filters.batch_uuid = savedBatchUuid;
                         if (savedCauserId) this.filters.causer_id = savedCauserId ? parseInt(savedCauserId) : null;
 
                         if (savedEventTypes) {
