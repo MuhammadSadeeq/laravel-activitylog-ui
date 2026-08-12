@@ -148,7 +148,7 @@ class ActivitylogService
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.causers';
 
-        return Cache::remember($cacheKey, 3600, function () {
+        return collect(Cache::remember($cacheKey, 3600, function () {
             return Activity::select('causer_type', 'causer_id')
                 ->whereNotNull('causer_type')
                 ->whereNotNull('causer_id')
@@ -167,8 +167,9 @@ class ActivitylogService
                     ];
                 })
                 ->unique('id')
-                ->values();
-        });
+                ->values()
+                ->toArray();
+        }));
     }
 
     /**
@@ -178,7 +179,7 @@ class ActivitylogService
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.subject_types';
 
-        return Cache::remember($cacheKey, 3600, function () {
+        return collect(Cache::remember($cacheKey, 3600, function () {
             return Activity::select('subject_type')
                 ->whereNotNull('subject_type')
                 ->distinct()
@@ -190,8 +191,9 @@ class ActivitylogService
                         'full_name' => $type,
                     ];
                 })
-                ->values();
-        });
+                ->values()
+                ->toArray();
+        }));
     }
 
     /**
@@ -201,7 +203,7 @@ class ActivitylogService
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.event_types';
 
-        return Cache::remember($cacheKey, 3600, function () {
+        return collect(Cache::remember($cacheKey, 3600, function () {
             return Activity::select('event')
                 ->whereNotNull('event')
                 ->distinct()
@@ -212,8 +214,9 @@ class ActivitylogService
                         'label' => ucfirst($event),
                     ];
                 })
-                ->values();
-        });
+                ->values()
+                ->toArray();
+        }));
     }
 
     /**
