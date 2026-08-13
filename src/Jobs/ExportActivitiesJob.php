@@ -88,7 +88,7 @@ class ExportActivitiesJob implements ShouldQueue
                 'download_url' => $downloadUrl
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Queued export job failed', [
                 'job_id' => $this->jobId,
                 'error' => $e->getMessage(),
@@ -179,7 +179,7 @@ class ExportActivitiesJob implements ShouldQueue
                 'user_email' => $user->email
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to send export completion notification', [
                 'job_id' => $this->jobId,
                 'error' => $e->getMessage()

@@ -231,7 +231,7 @@ class ActivityLogController extends Controller
                 'success' => true,
                 'data' => $data,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Analytics error: ' . $e->getMessage(), [
                 'exception' => $e,
                 'filters' => $filters,
@@ -320,7 +320,7 @@ class ActivityLogController extends Controller
                 'from' => $activities->firstItem(),
                 'to' => $activities->lastItem(),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Log the error for debugging
             Log::error('ActivityLog API Error: ' . $e->getMessage(), [
                 'filters' => $filters ?? null,
@@ -355,8 +355,17 @@ class ActivityLogController extends Controller
                 'data' => $activity,
                 'related' => $this->getRelatedActivitiesForActivity($activity)
             ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Activity not found: ' . $e->getMessage()], 404);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load activity detail', [
+                'activity_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to load activity.',
+                'message' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
         }
     }
 
@@ -379,8 +388,17 @@ class ActivityLogController extends Controller
             return response()->json([
                 'data' => $related
             ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Activity not found: ' . $e->getMessage()], 404);
+        } catch (\Throwable $e) {
+            Log::error('Failed to load related activities', [
+                'activity_id' => $activityId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to load related activities.',
+                'message' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
         }
     }
 
@@ -402,7 +420,12 @@ class ActivityLogController extends Controller
             return response()->json([
                 'data' => $suggestions
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            Log::error('Failed to fetch search suggestions', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json(['error' => 'Failed to fetch suggestions'], 500);
         }
     }
@@ -424,7 +447,7 @@ class ActivityLogController extends Controller
                 'subject_types' => $subjectTypes,
                 'event_types' => $eventTypes,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to get filter options', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -432,7 +455,7 @@ class ActivityLogController extends Controller
 
             return response()->json([
                 'error' => 'Failed to load filter options',
-                'message' => $e->getMessage()
+                'message' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }
@@ -451,7 +474,12 @@ class ActivityLogController extends Controller
                 'success' => true,
                 'data' => $eventTypes,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            Log::error('Failed to load event types styling', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to load event types styling.',
@@ -480,7 +508,12 @@ class ActivityLogController extends Controller
             return response()->json([
                 'data' => $views
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            Log::error('Failed to fetch saved views', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json(['error' => 'Failed to fetch saved views'], 500);
         }
     }

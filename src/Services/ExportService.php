@@ -430,7 +430,7 @@ class ExportService
 
             return $jobId;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Failed to queue export job', [
                 'job_id' => $jobId,
                 'error' => $e->getMessage()

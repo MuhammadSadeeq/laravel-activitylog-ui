@@ -584,7 +584,7 @@ class ActivitylogService
     /**
      * Get related activities for a given subject.
      */
-    public function getRelatedActivities(string $subjectType, int $subjectId, int $excludeId = null): Collection
+    public function getRelatedActivities(string $subjectType, int $subjectId, ?int $excludeId = null): Collection
     {
         $query = Activity::where('subject_type', $subjectType)
             ->where('subject_id', $subjectId)

@@ -99,7 +99,7 @@ class ExportController extends Controller
                 'filtered_count' => $filteredCount,
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Export failed', [
                 'error' => $e->getMessage(),
                 'filters' => $filters,
