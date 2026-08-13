@@ -67,15 +67,21 @@ class Activity extends SpatieActivity
 
         $now = Carbon::now();
 
+        // Carbon is mutable, so every branch works on a copy. `last_month` in
+        // particular used to call subMonth() twice, taking its month and its year
+        // from two different points in time, and subMonth() on the 31st overflows
+        // into the following month rather than clamping.
+        $lastMonth = $now->copy()->subMonthNoOverflow();
+
         return match ($preset) {
             'today' => $query->whereDate('created_at', $now->toDateString()),
-            'yesterday' => $query->whereDate('created_at', $now->subDay()->toDateString()),
-            'last_7_days' => $query->where('created_at', '>=', $now->subDays(7)),
-            'last_30_days' => $query->where('created_at', '>=', $now->subDays(30)),
+            'yesterday' => $query->whereDate('created_at', $now->copy()->subDay()->toDateString()),
+            'last_7_days' => $query->where('created_at', '>=', $now->copy()->subDays(7)),
+            'last_30_days' => $query->where('created_at', '>=', $now->copy()->subDays(30)),
             'this_month' => $query->whereMonth('created_at', $now->month)
                                  ->whereYear('created_at', $now->year),
-            'last_month' => $query->whereMonth('created_at', $now->subMonth()->month)
-                                 ->whereYear('created_at', $now->subMonth()->year),
+            'last_month' => $query->whereMonth('created_at', $lastMonth->month)
+                                 ->whereYear('created_at', $lastMonth->year),
             default => $query,
         };
     }
