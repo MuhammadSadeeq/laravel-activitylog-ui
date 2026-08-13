@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 
 class ActivitylogService
@@ -173,30 +174,56 @@ class ActivitylogService
     {
         $key = $this->filterCacheKey($name);
 
+        // Eviction is inside the guard too: a store that dies between the read and
+        // the forget would otherwise throw straight out of the service.
         try {
             $cached = Cache::get($key);
-        } catch (\Throwable) {
-            // A broken cache store should degrade to recomputing, not to an error.
-            return collect($compute());
-        }
 
-        if ($this->isRowList($cached)) {
-            return collect($cached);
-        }
+            if ($this->isValidRows($name, $cached)) {
+                return collect($cached);
+            }
 
-        if ($cached !== null) {
-            Cache::forget($key);
+            if ($cached !== null) {
+                Cache::forget($key);
+            }
+        } catch (\Throwable $e) {
+            $this->reportCacheFailure($key, 'read', $e);
         }
 
         $rows = $compute();
 
         try {
             Cache::put($key, $rows, config('activitylog-ui.performance.cache_ttl', 3600));
-        } catch (\Throwable) {
-            // Not being able to write the cache is not a reason to fail the request.
+        } catch (\Throwable $e) {
+            $this->reportCacheFailure($key, 'write', $e);
         }
 
         return collect($rows);
+    }
+
+    /**
+     * Report a cache failure without failing the request.
+     *
+     * Degrading to a recomputed value is correct, but doing it silently means a
+     * permanently broken cache store turns into permanent full-table scans with
+     * no signal at all. Logged once per key and operation per request.
+     *
+     * @var array<string, true>
+     */
+    protected array $reportedCacheFailures = [];
+
+    protected function reportCacheFailure(string $key, string $operation, \Throwable $e): void
+    {
+        if (isset($this->reportedCacheFailures["{$key}:{$operation}"])) {
+            return;
+        }
+
+        $this->reportedCacheFailures["{$key}:{$operation}"] = true;
+
+        Log::warning("Activity log UI cache {$operation} failed; falling back to a live query.", [
+            'key' => $key,
+            'error' => $e->getMessage(),
+        ]);
     }
 
     /**
@@ -210,16 +237,69 @@ class ActivitylogService
     }
 
     /**
-     * Whether a cached value is the list-of-rows shape these caches write.
+     * Keys each filter-option cache is required to carry, so a payload written
+     * for one cache cannot be served from another and a half-written row is
+     * rejected rather than rendered blank.
      */
-    protected function isRowList(mixed $value): bool
+    protected const FILTER_CACHE_KEYS = [
+        'causers' => ['id', 'type', 'name', 'label'],
+        'subject_types' => ['value', 'label', 'full_name'],
+        'event_types' => ['value', 'label'],
+        'event_types_with_styling' => ['value', 'label', 'colors', 'gradient', 'icon', 'badge_classes', 'timeline_classes'],
+    ];
+
+    /**
+     * Whether a cached value is exactly what this particular cache writes.
+     *
+     * "A list of arrays" is not enough. It would accept event rows served from
+     * the causers key, an associative array that JSON-encodes to an object the
+     * frontend cannot map over, and — the case this all exists for — a row whose
+     * nested value is an unresolvable object.
+     */
+    protected function isValidRows(string $name, mixed $value): bool
     {
+        if (!is_array($value) || !array_is_list($value)) {
+            return false;
+        }
+
+        $required = self::FILTER_CACHE_KEYS[$name] ?? [];
+
+        foreach ($value as $row) {
+            if (!is_array($row)) {
+                return false;
+            }
+
+            foreach ($required as $key) {
+                if (!array_key_exists($key, $row)) {
+                    return false;
+                }
+            }
+
+            if (!$this->isPlainData($row)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether a value is made only of scalars, nulls and arrays of the same.
+     *
+     * Any object fails, including __PHP_Incomplete_Class, at any depth.
+     */
+    protected function isPlainData(mixed $value): bool
+    {
+        if ($value === null || is_scalar($value)) {
+            return true;
+        }
+
         if (!is_array($value)) {
             return false;
         }
 
-        foreach ($value as $row) {
-            if (!is_array($row)) {
+        foreach ($value as $item) {
+            if (!$this->isPlainData($item)) {
                 return false;
             }
         }

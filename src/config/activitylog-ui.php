@@ -220,6 +220,13 @@ return [
     */
     'performance' => [
         'cache_prefix' => 'activitylog_ui',
+
+        // Seconds to cache the filter dropdown options (causers, subject types,
+        // event types). New causers will not appear until this expires; call
+        // ActivitylogService::flushFilterOptions() after a bulk import to refresh
+        // them immediately.
+        'cache_ttl' => 3600,
+
         'eager_load_relations' => ['causer', 'subject'],
     ],
 ];

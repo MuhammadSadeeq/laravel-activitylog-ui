@@ -5,6 +5,7 @@ namespace MuhammadSadeeq\ActivitylogUi\Services;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 
 class AnalyticsService
@@ -16,17 +17,13 @@ class AnalyticsService
     {
         // Create cache key based on filters
         $filterHash = md5(serialize($filters));
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.dashboard_summary.' . $filterHash;
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.dashboard_summary.' . $filterHash;
         $cacheDuration = config('activitylog-ui.analytics.cache_duration', 3600);
 
-        $cached = Cache::get($cacheKey);
-
-        if (is_array($cached)) {
-            return $cached;
-        }
+        $cached = $this->readCachedArray($cacheKey, ['stats', 'event_types', 'total_activities']);
 
         if ($cached !== null) {
-            Cache::forget($cacheKey);
+            return $cached;
         }
 
         $summary = (function () use ($filters) {
@@ -66,9 +63,91 @@ class AnalyticsService
             ];
         })();
 
-        Cache::put($cacheKey, $summary, $cacheDuration);
+        $this->writeCachedArray($cacheKey, $summary, $cacheDuration);
 
         return $summary;
+    }
+
+    /**
+     * Version segment for the analytics cache keys.
+     *
+     * These payloads used to contain Collections, Eloquent models and Carbon
+     * instances. Without a version bump an entry written before that changed
+     * would still be read back and served, since it is an array either way.
+     */
+    protected const ANALYTICS_CACHE_VERSION = 'v2';
+
+    /**
+     * Read a cached analytics array, or null when there is nothing usable.
+     *
+     * @param  list<string>  $requiredKeys
+     * @return array<string, mixed>|null
+     */
+    protected function readCachedArray(string $key, array $requiredKeys = []): ?array
+    {
+        try {
+            $cached = Cache::get($key);
+
+            if (is_array($cached) && $this->isPlainData($cached)) {
+                foreach ($requiredKeys as $required) {
+                    if (!array_key_exists($required, $cached)) {
+                        Cache::forget($key);
+
+                        return null;
+                    }
+                }
+
+                return $cached;
+            }
+
+            if ($cached !== null) {
+                Cache::forget($key);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Activity log UI analytics cache read failed; falling back to a live query.', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Write a cached analytics array, tolerating an unavailable store.
+     */
+    protected function writeCachedArray(string $key, array $value, int $ttl): void
+    {
+        try {
+            Cache::put($key, $value, $ttl);
+        } catch (\Throwable $e) {
+            Log::warning('Activity log UI analytics cache write failed.', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Whether a value is made only of scalars, nulls and arrays of the same.
+     */
+    protected function isPlainData(mixed $value): bool
+    {
+        if ($value === null || is_scalar($value)) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (!$this->isPlainData($item)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -359,7 +438,7 @@ class AnalyticsService
      */
     public function getUserActivityProfile(int $userId, string $userType): array
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".user_profile.{$userType}.{$userId}";
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . ".user_profile.{$userType}.{$userId}";
 
         $cached = Cache::get($cacheKey);
 
@@ -456,7 +535,7 @@ class AnalyticsService
      */
     public function getActivityHeatmap(int $days = 365): array
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".heatmap.{$days}";
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . ".heatmap.{$days}";
 
         return Cache::remember($cacheKey, 3600, function () use ($days) {
             $startDate = now()->subDays($days)->startOfDay();
