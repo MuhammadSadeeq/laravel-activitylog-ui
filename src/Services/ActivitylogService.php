@@ -142,13 +142,108 @@ class ActivitylogService
     }
 
     /**
+     * Version suffix for the filter-option cache keys.
+     *
+     * Bump this whenever the cached row shape changes, so an upgrade cannot serve
+     * a payload written by an older release.
+     */
+    protected const FILTER_CACHE_VERSION = 'v2';
+
+    /**
+     * Names of the filter-option caches, for invalidation.
+     */
+    protected const FILTER_CACHES = ['causers', 'subject_types', 'event_types', 'event_types_with_styling'];
+
+    /**
+     * Read a cached list of rows, recomputing when the stored value is not the
+     * plain array of arrays that was written.
+     *
+     * These caches used to hold Collection objects. If such a payload cannot be
+     * unserialized on read — a class the reading process cannot load, a store
+     * shared with another application — PHP hands back __PHP_Incomplete_Class,
+     * which then violated the declared Collection return type and took the whole
+     * dashboard down with an unhandled TypeError (issue #12). Storing plain
+     * arrays removes the class dependency, and validating on read means anything
+     * unexpected is discarded and recomputed rather than returned.
+     *
+     * @param  callable(): array<int, array<string, mixed>>  $compute
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function rememberFilterOptions(string $name, callable $compute): Collection
+    {
+        $key = $this->filterCacheKey($name);
+
+        try {
+            $cached = Cache::get($key);
+        } catch (\Throwable) {
+            // A broken cache store should degrade to recomputing, not to an error.
+            return collect($compute());
+        }
+
+        if ($this->isRowList($cached)) {
+            return collect($cached);
+        }
+
+        if ($cached !== null) {
+            Cache::forget($key);
+        }
+
+        $rows = $compute();
+
+        try {
+            Cache::put($key, $rows, config('activitylog-ui.performance.cache_ttl', 3600));
+        } catch (\Throwable) {
+            // Not being able to write the cache is not a reason to fail the request.
+        }
+
+        return collect($rows);
+    }
+
+    /**
+     * Build a versioned cache key for a filter-option list.
+     */
+    protected function filterCacheKey(string $name): string
+    {
+        return config('activitylog-ui.performance.cache_prefix')
+            . '.' . self::FILTER_CACHE_VERSION
+            . '.' . $name;
+    }
+
+    /**
+     * Whether a cached value is the list-of-rows shape these caches write.
+     */
+    protected function isRowList(mixed $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $row) {
+            if (!is_array($row)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Discard every filter-option cache. Call after bulk-importing or pruning
+     * activities so the dropdowns do not lag behind by up to the cache TTL.
+     */
+    public function flushFilterOptions(): void
+    {
+        foreach (self::FILTER_CACHES as $name) {
+            Cache::forget($this->filterCacheKey($name));
+        }
+    }
+
+    /**
      * Get available causers for filtering.
      */
     public function getAvailableCausers(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.causers';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('causers', function () {
             return Activity::select('causer_type', 'causer_id')
                 ->whereNotNull('causer_type')
                 ->whereNotNull('causer_id')
@@ -168,7 +263,8 @@ class ActivitylogService
                     ];
                 })
                 ->unique('id')
-                ->values();
+                ->values()
+                ->all();
         });
     }
 
@@ -199,9 +295,7 @@ class ActivitylogService
      */
     public function getAvailableSubjectTypes(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.subject_types';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('subject_types', function () {
             return Activity::select('subject_type')
                 ->whereNotNull('subject_type')
                 ->distinct()
@@ -213,7 +307,8 @@ class ActivitylogService
                         'full_name' => $type,
                     ];
                 })
-                ->values();
+                ->values()
+                ->all();
         });
     }
 
@@ -222,9 +317,7 @@ class ActivitylogService
      */
     public function getAvailableEventTypes(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.event_types';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('event_types', function () {
             return Activity::select('event')
                 ->whereNotNull('event')
                 ->distinct()
@@ -235,7 +328,8 @@ class ActivitylogService
                         'label' => ucfirst($event),
                     ];
                 })
-                ->values();
+                ->values()
+                ->all();
         });
     }
 
@@ -244,9 +338,7 @@ class ActivitylogService
      */
     public function getEventTypesWithStyling(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.event_types_with_styling';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('event_types_with_styling', function () {
             $eventTypes = Activity::select('event')
                 ->whereNotNull('event')
                 ->distinct()
@@ -265,7 +357,7 @@ class ActivitylogService
                     'badge_classes' => $styling['badge_classes'],
                     'timeline_classes' => $styling['timeline_classes'],
                 ];
-            });
+            })->all();
         });
     }
 

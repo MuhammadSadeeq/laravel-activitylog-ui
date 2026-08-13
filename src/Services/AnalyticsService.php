@@ -19,7 +19,17 @@ class AnalyticsService
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.dashboard_summary.' . $filterHash;
         $cacheDuration = config('activitylog-ui.analytics.cache_duration', 3600);
 
-        return Cache::remember($cacheKey, $cacheDuration, function () use ($filters) {
+        $cached = Cache::get($cacheKey);
+
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        if ($cached !== null) {
+            Cache::forget($cacheKey);
+        }
+
+        $summary = (function () use ($filters) {
             $eventTypeBreakdown = $this->getEventTypeBreakdown($filters);
             $totalActivities = $this->getTotalActivities($filters);
 
@@ -48,10 +58,17 @@ class AnalyticsService
                 'activities_today' => $this->getActivitiesToday($filters),
                 'activities_this_week' => $this->getActivitiesThisWeek($filters),
                 'activities_this_month' => $this->getActivitiesThisMonth($filters),
-                'popular_models' => $this->getPopularModels(10, $filters),
+                // toArray(): this was a Collection object inside an otherwise plain
+                // cached array, so the payload still depended on a class being
+                // loadable at unserialize time.
+                'popular_models' => $this->getPopularModels(10, $filters)->toArray(),
                 'activity_trends' => $this->getActivityTrends(30, $filters),
             ];
-        });
+        })();
+
+        Cache::put($cacheKey, $summary, $cacheDuration);
+
+        return $summary;
     }
 
     /**
@@ -344,22 +361,38 @@ class AnalyticsService
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".user_profile.{$userType}.{$userId}";
 
-        return Cache::remember($cacheKey, 1800, function () use ($userId, $userType) {
-            $activities = Activity::where('causer_type', $userType)
-                ->where('causer_id', $userId)
-                ->with('subject')
-                ->get();
+        $cached = Cache::get($cacheKey);
 
-            return [
-                'total_activities' => $activities->count(),
-                'first_activity' => $activities->min('created_at'),
-                'last_activity' => $activities->max('created_at'),
-                'event_breakdown' => $this->getUserEventBreakdown($activities),
-                'subject_breakdown' => $this->getUserSubjectBreakdown($activities),
-                'daily_activity' => $this->getUserDailyActivity($activities),
-                'recent_activities' => $activities->sortByDesc('created_at')->take(10)->values(),
-            ];
-        });
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        if ($cached !== null) {
+            Cache::forget($cacheKey);
+        }
+
+        $activities = Activity::where('causer_type', $userType)
+            ->where('causer_id', $userId)
+            ->with('subject')
+            ->get();
+
+        // Everything stored here is reduced to plain arrays and scalars. This used
+        // to cache Eloquent models and Collections; if that payload could not be
+        // unserialized the method still satisfied its `array` return type, so it
+        // failed silently with junk data rather than loudly.
+        $profile = [
+            'total_activities' => $activities->count(),
+            'first_activity' => optional($activities->min('created_at'))->toISOString(),
+            'last_activity' => optional($activities->max('created_at'))->toISOString(),
+            'event_breakdown' => $this->getUserEventBreakdown($activities)->all(),
+            'subject_breakdown' => $this->getUserSubjectBreakdown($activities)->all(),
+            'daily_activity' => $this->getUserDailyActivity($activities),
+            'recent_activities' => $activities->sortByDesc('created_at')->take(10)->values()->toArray(),
+        ];
+
+        Cache::put($cacheKey, $profile, 1800);
+
+        return $profile;
     }
 
     /**
