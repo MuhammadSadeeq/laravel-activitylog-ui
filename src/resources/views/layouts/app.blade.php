@@ -166,16 +166,25 @@
                         });
                         @endif
 
-                        // Restore persisted state
-                        this.restorePersistedState();
+                        try {
+                            // Restore persisted state
+                            this.restorePersistedState();
 
-                        await this.loadCausers();
-                        this.filteredCausers = this.availableCausers;
-
-                        // Emit event that filter panel is ready with initial filters
-                        window.dispatchEvent(new CustomEvent('filter-panel-ready', {
-                            detail: this.filters
-                        }));
+                            await this.loadCausers();
+                            this.filteredCausers = this.availableCausers;
+                        } catch (error) {
+                            // Reading localStorage can throw outright (opaque origin,
+                            // storage disabled). Carry on with default filters rather
+                            // than leaving the panel half-initialised.
+                            console.error('Filter panel initialization failed:', error);
+                        } finally {
+                            // This event is the dashboard's only trigger for its first
+                            // data load, so it has to fire even when the above failed —
+                            // otherwise the page sits empty having never made a request.
+                            window.dispatchEvent(new CustomEvent('filter-panel-ready', {
+                                detail: this.filters
+                            }));
+                        }
                     },
 
                     async loadCausers() {

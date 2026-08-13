@@ -77,7 +77,7 @@
         <!-- Main Content -->
         <div class="w-full lg:flex-1 lg:min-w-0" :class="{ 'lg:ml-0': currentView === 'analytics' }">
             <!-- Loading State -->
-            <div x-show="loading" class="flex items-center justify-center py-12">
+            <div x-show="(loading || !hasLoaded) && currentView !== 'analytics'" class="flex items-center justify-center py-12">
                 <div class="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
                     <svg class="animate-spin h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -87,12 +87,12 @@
             </div>
 
             <!-- Table View -->
-            <div x-show="currentView === 'table' && !loading">
+            <div x-show="currentView === 'table' && !loading && hasLoaded">
                 @include('activitylog-ui::components.table-view')
             </div>
 
             <!-- Timeline View -->
-            <div x-show="currentView === 'timeline' && !loading">
+            <div x-show="currentView === 'timeline' && !loading && hasLoaded">
                 @include('activitylog-ui::components.timeline-view')
             </div>
 
@@ -124,6 +124,10 @@ function activityDashboard() {
         initialized: false,
         currentView: '{{ $view }}',
         loading: false,
+        // False until the first activities request settles. Without it the views
+        // render their "no activities found" state while the filter panel is still
+        // initialising, before any request has even been made.
+        hasLoaded: false,
         // Kept separate from `loading` so appending to the timeline does not
         // hide the list the user is currently scrolled into — x-show collapses
         // the document height, and the browser then clamps scrollTop to 0.
@@ -192,12 +196,10 @@ function activityDashboard() {
             @endif
             window.addEventListener('filter-panel-ready', this.filterChangedHandler);
 
-            // Load initial data based on the default view
-            if (this.currentView === 'analytics') {
-                this.reloadAnalytics();
-            } else {
-                this.loadActivities();
-            }
+            // The initial load is driven by 'filter-panel-ready', which fires once
+            // the panel has restored the user's saved filters and carries them in
+            // its payload. Loading here as well would issue a second request whose
+            // result is immediately discarded, and show the user two toasts.
         },
 
         async loadActivities(page = 1) {
@@ -251,10 +253,7 @@ function activityDashboard() {
                 this.totalActivities = result.total || 0;
                 this.totalPages = result.last_page || 1;
 
-                if (window.notify) {
-                    window.notify.success('Success', `Loaded ${this.activities.length} activities`);
-                }
-
+                // No success toast: the rows appearing is the confirmation.
             } catch (error) {
                 this.activities = [];
                 this.totalActivities = 0;
@@ -264,6 +263,7 @@ function activityDashboard() {
                 }
             } finally {
                 this.loading = false;
+                this.hasLoaded = true;
             }
         },
 
@@ -381,9 +381,8 @@ function activityDashboard() {
                     this.currentPage = nextPage;
                     this.totalPages = result.last_page || 1;
 
-                    if (window.notify) {
-                        window.notify.success('Success', `Loaded ${result.data.length} more activities`);
-                    }
+                    // No success toast: the appended rows and the "showing X of Y"
+                    // counter below the button already report the result.
                 }
 
             } catch (error) {
