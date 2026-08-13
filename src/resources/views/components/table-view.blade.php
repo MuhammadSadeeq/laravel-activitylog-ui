@@ -136,19 +136,36 @@
             </tbody>
         </table>
 
-        <!-- Empty State with Error -->
-        <div x-show="!loading && activities.length === 0"
+        <!-- Failed request: distinct from a search that simply matched nothing -->
+        <div x-show="!loading && loadError"
              class="text-center py-12 bg-white dark:bg-gray-800">
             <div class="inline-flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-red-100 dark:bg-red-900/20 rounded-full">
                 <svg class="w-8 h-8 text-red-500 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
             </div>
-            <h3 class="text-base font-medium text-gray-900 dark:text-white mb-1">No activities found</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">The requested page could not be loaded. Please try a different page number.</p>
-            <button @click="pageInput = currentPage; changePage(currentPage)"
+            <h3 class="text-base font-medium text-gray-900 dark:text-white mb-1">Could not load activities</h3>
+            <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">The request failed. Check your connection or the application logs, then try again.</p>
+            <button @click="loadActivities(currentPage)"
                     class="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                Return to Previous Page
+                Try again
+            </button>
+        </div>
+
+        <!-- Empty state: a successful request that matched nothing is not an error -->
+        <div x-show="!loading && !loadError && activities.length === 0"
+             class="text-center py-12 bg-white dark:bg-gray-800">
+            <div class="inline-flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-gray-100 dark:bg-gray-700/40 rounded-full">
+                <svg class="w-8 h-8 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+            </div>
+            <h3 class="text-base font-medium text-gray-900 dark:text-white mb-1">No activities found</h3>
+            <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">No activities match your current filters. Try adjusting your search criteria or date range.</p>
+            <button x-show="currentPage > 1"
+                    @click="pageInput = 1; changePage(1)"
+                    class="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                Back to first page
             </button>
         </div>
     </div>

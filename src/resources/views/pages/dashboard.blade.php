@@ -128,6 +128,10 @@ function activityDashboard() {
         // render their "no activities found" state while the filter panel is still
         // initialising, before any request has even been made.
         hasLoaded: false,
+        // Set when the last load failed. Without it an empty `activities` reads as
+        // "nothing matched your filters", so a 500 looks like a successful search
+        // once the error toast has faded.
+        loadError: false,
         // Kept separate from `loading` so appending to the timeline does not
         // hide the list the user is currently scrolled into — x-show collapses
         // the document height, and the browser then clamps scrollTop to 0.
@@ -209,6 +213,7 @@ function activityDashboard() {
             }
 
             this.loading = true;
+            this.loadError = false;
             this.currentPage = page;
             // Supersede any "load more" still in flight, and release its lock so
             // the button is usable as soon as this reload lands rather than
@@ -257,6 +262,7 @@ function activityDashboard() {
             } catch (error) {
                 this.activities = [];
                 this.totalActivities = 0;
+                this.loadError = true;
 
                 if (window.notify) {
                     window.notify.error('Error', 'Failed to load activities');
@@ -375,14 +381,20 @@ function activityDashboard() {
                     return;
                 }
 
-                // Append new activities to existing ones for timeline view
                 if (result.data && result.data.length > 0) {
+                    // Append new activities to existing ones for timeline view.
+                    // No success toast: the appended rows and the "showing X of Y"
+                    // counter below the button already report the result.
                     this.activities = [...this.activities, ...result.data];
                     this.currentPage = nextPage;
                     this.totalPages = result.last_page || 1;
-
-                    // No success toast: the appended rows and the "showing X of Y"
-                    // counter below the button already report the result.
+                } else {
+                    // Empty page: stop here rather than ignore it, which left the
+                    // button visible re-requesting the same page forever. Clamp
+                    // downward only — claiming pages we never appended would skip
+                    // rows that are still there.
+                    this.currentPage = Math.min(this.currentPage, result.last_page || 1);
+                    this.totalPages = this.currentPage;
                 }
 
             } catch (error) {
@@ -425,12 +437,11 @@ function activityDashboard() {
                     window.notify.info('Timeline View', message);
                 }
             } else if (view === 'table') {
-                // Table view can handle any page - maintain current pagination
-            this.loadActivities();
-
-                if (window.notify && previousView === 'timeline' && this.currentPage > 1) {
-                    window.notify.info('Table View', `Showing page ${this.currentPage} of activities`);
-                }
+                // Starts at page 1. In timeline, currentPage is an append cursor —
+                // after three Load Mores it is 3 while the user is looking at rows
+                // 1-75 — so carrying it over would drop them on rows 51-75 of a page
+                // they never chose. Table paging needs its own state to do better.
+                this.loadActivities();
             } else if (view === 'analytics') {
                 // Analytics doesn't use pagination
                 this.reloadAnalytics();
