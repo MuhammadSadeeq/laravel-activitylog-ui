@@ -34,34 +34,53 @@ class ActivityLogController extends Controller
         $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
         $perPage = $request->input('per_page', config('activitylog-ui.ui.default_per_page', 25));
 
-        // Get activities based on view type
-        if ($view === 'timeline') {
-            $data = $this->activitylogService->getTimelineActivities($filters, $perPage);
-        } else {
-            $data = $this->activitylogService->getActivities($filters, $perPage);
+        $data = ['filters' => $filters, 'view' => $view, 'perPage' => $perPage];
+
+        // Activities, filter options and saved views are all fetched over the API
+        // once the page is up, so querying them here only duplicated that work on
+        // every render. It also put getAvailableCausers() — a full scan of the log
+        // — on the request path with no error handling around it, which is how a
+        // single bad cache entry took the whole dashboard down (issue #12).
+        //
+        // Views published before v2.1 may still reference the old variables, so
+        // they are supplied when a published copy is present. Deprecated: this
+        // fallback will be dropped in the next major version.
+        if ($this->hasPublishedDashboardView()) {
+            $data += $this->legacyViewData($request, $filters, $view, $perPage);
         }
 
-        // Get filter options
-        $filterOptions = [
-            'causers' => $this->activitylogService->getAvailableCausers(),
-            'subject_types' => $this->activitylogService->getAvailableSubjectTypes(),
-            'event_types' => $this->activitylogService->getAvailableEventTypes(),
-            'date_presets' => config('activitylog-ui.filters.date_presets', []),
+        return view('activitylog-ui::pages.dashboard', $data);
+    }
+
+    /**
+     * Whether the host application has published its own copy of the dashboard view.
+     */
+    protected function hasPublishedDashboardView(): bool
+    {
+        return is_file(resource_path('views/vendor/activitylog-ui/pages/dashboard.blade.php'));
+    }
+
+    /**
+     * @deprecated Prefetched view data kept only for views published before v2.1.
+     *
+     * @return array<string, mixed>
+     */
+    protected function legacyViewData(Request $request, array $filters, string $view, mixed $perPage): array
+    {
+        return [
+            'data' => $view === 'timeline'
+                ? $this->activitylogService->getTimelineActivities($filters, $perPage)
+                : $this->activitylogService->getActivities($filters, $perPage),
+            'filterOptions' => [
+                'causers' => $this->activitylogService->getAvailableCausers(),
+                'subject_types' => $this->activitylogService->getAvailableSubjectTypes(),
+                'event_types' => $this->activitylogService->getAvailableEventTypes(),
+                'date_presets' => config('activitylog-ui.filters.date_presets', []),
+            ],
+            'savedViews' => config('activitylog-ui.features.saved_views', true)
+                ? $this->activitylogService->getSavedViews($request->user()?->id)
+                : [],
         ];
-
-        // Get saved views (only if feature is enabled)
-        $savedViews = config('activitylog-ui.features.saved_views', true)
-            ? $this->activitylogService->getSavedViews($request->user()?->id)
-            : [];
-
-        return view('activitylog-ui::pages.dashboard', compact(
-            'data',
-            'filters',
-            'view',
-            'filterOptions',
-            'savedViews',
-            'perPage'
-        ));
     }
 
     /**
@@ -577,7 +596,8 @@ class ActivityLogController extends Controller
      *
      * Host applications key their models on auto-increment integers, UUIDs or
      * ULIDs, so a non-numeric id is a legitimate value and is passed through
-     * rather than discarded.
+     * rather than discarded. The service layer and the model scopes already
+     * accept both.
      */
     private function sanitizeId(mixed $id): int|string|null
     {
@@ -592,7 +612,7 @@ class ActivityLogController extends Controller
         // Only a canonical integer literal is treated as an integer key. is_numeric()
         // is too loose here: it accepts '1e3' and '5.9', and it also matches an
         // all-digit ULID, which would then be cast to a completely different value.
-        if (preg_match('/^-?\\d+$/', $id) === 1 && $id === (string) (int) $id) {
+        if (preg_match('/^-?\d+$/', $id) === 1 && $id === (string) (int) $id) {
             return (int) $id;
         }
 
