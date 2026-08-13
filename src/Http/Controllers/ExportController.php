@@ -108,7 +108,8 @@ class ExportController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Export failed: ' . $e->getMessage(),
+                'message' => 'Export failed.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }

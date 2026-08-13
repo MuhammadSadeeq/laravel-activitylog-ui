@@ -420,16 +420,6 @@ class ExportService
             // Dispatch the job
             $job = new \MuhammadSadeeq\ActivitylogUi\Jobs\ExportActivitiesJob($jobId, $filters, $format, $options, $userId);
             dispatch($job);
-
-            \Log::info('Export job queued successfully', [
-                'job_id' => $jobId,
-                'format' => $format,
-                'filters' => $filters,
-                'user_id' => $userId
-            ]);
-
-            return $jobId;
-
         } catch (\Throwable $e) {
             \Log::error('Failed to queue export job', [
                 'job_id' => $jobId,
@@ -449,5 +439,16 @@ class ExportService
 
             throw $e;
         }
+
+        // The job is accepted from here on. A failure while logging must not
+        // mark an already-dispatched (and possibly already-run) export failed.
+        \Log::info('Export job queued successfully', [
+            'job_id' => $jobId,
+            'format' => $format,
+            'filters' => $filters,
+            'user_id' => $userId
+        ]);
+
+        return $jobId;
     }
 }

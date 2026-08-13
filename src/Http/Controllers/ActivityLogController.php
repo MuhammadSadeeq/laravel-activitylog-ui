@@ -303,9 +303,9 @@ class ActivityLogController extends Controller
      */
     public function getActivities(Request $request): JsonResponse
     {
-        try {
-            $this->authorize('viewActivityLogUi');
+        $this->authorize('viewActivityLogUi');
 
+        try {
             $filters = $this->getFiltersFromRequest($request);
             $perPage = $request->input('per_page', 25);
 
@@ -328,7 +328,8 @@ class ActivityLogController extends Controller
             ]);
 
             return response()->json([
-                'error' => 'Failed to fetch activities: ' . $e->getMessage(),
+                'error' => 'Failed to fetch activities.',
+                'message' => config('app.debug') ? $e->getMessage() : null,
                 'debug_info' => config('app.debug') ? [
                     'filters' => $filters ?? null,
                     'trace' => $e->getTraceAsString()
