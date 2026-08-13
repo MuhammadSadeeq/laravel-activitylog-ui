@@ -34,9 +34,9 @@ class ExportController extends Controller
             'options' => 'array',
         ]);
 
-        $format = $request->get('format');
-        $filters = $request->get('filters', []);
-        $options = $request->get('options', []);
+        $format = $request->input('format');
+        $filters = $request->input('filters', []);
+        $options = $request->input('options', []);
 
         // Add filters to options for proper tracking
         $options['applied_filters'] = $filters;
@@ -124,7 +124,7 @@ class ExportController extends Controller
             'path' => 'required|string',
         ]);
 
-        $path = base64_decode($request->get('path'));
+        $path = base64_decode($request->input('path'));
 
         // Security check: ensure path is within exports directory
         $exportPath = config('activitylog-ui.exports.path', 'exports/activity-logs');
@@ -157,7 +157,7 @@ class ExportController extends Controller
             'job_id' => 'required|string',
         ]);
 
-        $jobId = $request->get('job_id');
+        $jobId = $request->input('job_id');
         $progress = $this->exportService->getExportProgress($jobId);
 
         return response()->json([

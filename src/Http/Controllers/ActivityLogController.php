@@ -31,8 +31,8 @@ class ActivityLogController extends Controller
         $this->authorize('viewActivityLogUi');
 
         $filters = $this->getFiltersFromRequest($request);
-        $view = $request->get('view', config('activitylog-ui.ui.default_view', 'table'));
-        $perPage = $request->get('per_page', config('activitylog-ui.ui.default_per_page', 25));
+        $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
+        $perPage = $request->input('per_page', config('activitylog-ui.ui.default_per_page', 25));
 
         // Get activities based on view type
         if ($view === 'timeline') {
@@ -72,8 +72,8 @@ class ActivityLogController extends Controller
         $this->authorize('viewActivityLogUi');
 
         $filters = $this->getFiltersFromRequest($request);
-        $view = $request->get('view', config('activitylog-ui.ui.default_view', 'table'));
-        $perPage = $request->get('per_page', config('activitylog-ui.ui.default_per_page', 25));
+        $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
+        $perPage = $request->input('per_page', config('activitylog-ui.ui.default_per_page', 25));
 
         if ($view === 'timeline') {
             $data = $this->activitylogService->getTimelineActivities($filters, $perPage);
@@ -124,7 +124,7 @@ class ActivityLogController extends Controller
             'query' => 'required|string|min:2|max:100',
         ]);
 
-        $query = $request->get('query');
+        $query = $request->input('query');
         $results = $this->activitylogService->searchWithSuggestions($query);
 
         return response()->json([
@@ -153,8 +153,8 @@ class ActivityLogController extends Controller
         ]);
 
         $view = $this->activitylogService->saveView(
-            $request->get('filters'),
-            $request->get('name'),
+            $request->input('filters'),
+            $request->input('name'),
             $request->user()?->id
         );
 
@@ -184,7 +184,7 @@ class ActivityLogController extends Controller
         ]);
 
         $this->activitylogService->deleteSavedView(
-            $request->get('view_id'),
+            $request->input('view_id'),
             $request->user()?->id
         );
 
@@ -213,7 +213,7 @@ class ActivityLogController extends Controller
 
         // Keep existing behavior: if dates are not fully provided, derive from period.
         if (empty($filters['start_date']) || empty($filters['end_date'])) {
-            $period = $request->get('period', 'today');
+            $period = $request->input('period', 'today');
 
             if ($period === 'today') {
                 $filters['start_date'] = now()->startOfDay()->toDateString();
@@ -255,7 +255,7 @@ class ActivityLogController extends Controller
             'user_type' => 'required|string',
         ]);
 
-        $userType = $request->get('user_type');
+        $userType = $request->input('user_type');
         $profile = $this->analyticsService->getUserActivityProfile($userId, $userType);
 
         return response()->json([
@@ -271,7 +271,7 @@ class ActivityLogController extends Controller
     {
         $this->authorize('viewActivityLogUi');
 
-        $days = $request->get('days', 365);
+        $days = $request->input('days', 365);
         $heatmapData = $this->analyticsService->getActivityHeatmap($days);
 
         return response()->json([
@@ -287,8 +287,8 @@ class ActivityLogController extends Controller
     {
         $this->authorize('viewActivityLogUi');
 
-        $hours = $request->get('hours', 1);
-        $limit = $request->get('limit', 50);
+        $hours = $request->input('hours', 1);
+        $limit = $request->input('limit', 50);
 
         $activities = $this->activitylogService->getRecentActivities($hours, $limit);
 
@@ -307,7 +307,7 @@ class ActivityLogController extends Controller
             $this->authorize('viewActivityLogUi');
 
             $filters = $this->getFiltersFromRequest($request);
-            $perPage = $request->get('per_page', 25);
+            $perPage = $request->input('per_page', 25);
 
             $activities = $this->activitylogService->getActivities($filters, $perPage);
 
@@ -507,16 +507,16 @@ class ActivityLogController extends Controller
     protected function getFiltersFromRequest(Request $request): array
     {
         return [
-            'search' => $request->get('search'),
-            'date_preset' => $request->get('date_preset'),
-            'start_date' => $request->get('start_date'),
-            'end_date' => $request->get('end_date'),
-            'causer_type' => $request->get('causer_type'),
-            'causer_id' => $this->sanitizeId($request->get('causer_id')),
-            'subject_type' => $request->get('subject_type'),
-            'subject_id' => $this->sanitizeId($request->get('subject_id')),
+            'search' => $request->input('search'),
+            'date_preset' => $request->input('date_preset'),
+            'start_date' => $request->input('start_date'),
+            'end_date' => $request->input('end_date'),
+            'causer_type' => $request->input('causer_type'),
+            'causer_id' => $this->sanitizeId($request->input('causer_id')),
+            'subject_type' => $request->input('subject_type'),
+            'subject_id' => $this->sanitizeId($request->input('subject_id')),
             'event_types' => $this->getArrayFromRequest($request, 'event_types'),
-            'property_key' => $request->get('property_key'),
+            'property_key' => $request->input('property_key'),
         ];
     }
 
@@ -525,7 +525,7 @@ class ActivityLogController extends Controller
      */
     private function getArrayFromRequest(Request $request, string $key): array
     {
-        $value = $request->get($key);
+        $value = $request->input($key);
 
         if (is_array($value)) {
             return array_filter($value, fn($item) => $item !== null && $item !== '');
