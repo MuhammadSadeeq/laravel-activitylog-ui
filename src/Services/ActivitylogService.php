@@ -163,12 +163,35 @@ class ActivitylogService
                         'id' => $activity->causer_id,
                         'type' => $activity->causer_type,
                         'name' => $activity->causer_name,
+                        'email' => $this->causerEmail($activity),
                         'label' => $activity->causer_name . ' (' . class_basename($activity->causer_type) . ')',
                     ];
                 })
                 ->unique('id')
                 ->values();
         });
+    }
+
+    /**
+     * Resolve a causer's email address for the filter dropdown.
+     *
+     * Reading the attribute can run a host accessor or an encrypted cast, either
+     * of which may throw. An optional display field must never take the whole
+     * filter panel down, so failures resolve to null.
+     */
+    protected function causerEmail(Activity $activity): ?string
+    {
+        if (!config('activitylog-ui.filters.expose_causer_email', false)) {
+            return null;
+        }
+
+        try {
+            $email = $activity->causer->email ?? null;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return is_scalar($email) ? (string) $email : null;
     }
 
     /**

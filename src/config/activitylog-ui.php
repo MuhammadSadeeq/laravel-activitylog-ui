@@ -203,6 +203,14 @@ return [
             'custom' => 'Custom range',
         ],
         'max_saved_views' => 10,
+
+        // Include causer email addresses in the causer filter dropdown, which
+        // makes the "Search users" box match on email as well as name.
+        //
+        // Off by default: the filter options endpoint returns every distinct
+        // causer, and it is unauthenticated unless 'authorization.enabled' is
+        // turned on, so enabling this would publish a complete email directory.
+        'expose_causer_email' => false,
     ],
 
     /*

@@ -231,8 +231,8 @@
 
                         const search = this.causerSearch.toLowerCase();
                         this.filteredCausers = this.availableCausers.filter(causer =>
-                            causer.name.toLowerCase().includes(search) ||
-                            causer.email.toLowerCase().includes(search)
+                            String(causer.name ?? '').toLowerCase().includes(search) ||
+                            String(causer.email ?? '').toLowerCase().includes(search)
                         );
                     },
 
