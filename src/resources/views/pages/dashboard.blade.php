@@ -124,6 +124,13 @@ function activityDashboard() {
         initialized: false,
         currentView: '{{ $view }}',
         loading: false,
+        // Kept separate from `loading` so appending to the timeline does not
+        // hide the list the user is currently scrolled into — x-show collapses
+        // the document height, and the browser then clamps scrollTop to 0.
+        loadingMore: false,
+        // Bumped by every full reload. An in-flight "load more" compares against
+        // it so a superseded page is discarded instead of appended.
+        requestToken: 0,
         activities: [],
         totalActivities: 0,
         currentPage: 1,
@@ -201,6 +208,11 @@ function activityDashboard() {
 
             this.loading = true;
             this.currentPage = page;
+            // Supersede any "load more" still in flight, and release its lock so
+            // the button is usable as soon as this reload lands rather than
+            // whenever the abandoned request happens to settle.
+            this.requestToken++;
+            this.loadingMore = false;
 
             try {
                 // Build query parameters
@@ -315,13 +327,14 @@ function activityDashboard() {
 
         // Load more activities for timeline view
         async loadMoreActivities() {
-            if (this.currentView !== 'timeline' || this.loading || this.currentPage >= this.totalPages) {
+            if (this.currentView !== 'timeline' || this.loading || this.loadingMore || this.currentPage >= this.totalPages) {
                 return;
             }
 
             const nextPage = this.currentPage + 1;
+            const token = this.requestToken;
 
-            this.loading = true;
+            this.loadingMore = true;
 
             try {
                 // Build query parameters
@@ -355,6 +368,13 @@ function activityDashboard() {
 
                 const result = await window.ActivitylogUi.parseJsonResponse(response, 'Loading more activities');
 
+                // A filter change or view switch may have reloaded the list while
+                // this request was in flight; appending a stale page would
+                // duplicate or interleave rows.
+                if (token !== this.requestToken) {
+                    return;
+                }
+
                 // Append new activities to existing ones for timeline view
                 if (result.data && result.data.length > 0) {
                     this.activities = [...this.activities, ...result.data];
@@ -367,12 +387,22 @@ function activityDashboard() {
                 }
 
             } catch (error) {
+                // A reload already replaced what this request was appending to,
+                // so its failure is no longer something the user can act on.
+                if (token !== this.requestToken) {
+                    return;
+                }
+
                 console.error('Error loading more activities:', error);
                 if (window.notify) {
                     window.notify.error('Error', 'Failed to load more activities');
                 }
             } finally {
-                this.loading = false;
+                // Only release the lock if this request still owns it. A reload
+                // may have cleared it and a newer "load more" may already hold it.
+                if (token === this.requestToken) {
+                    this.loadingMore = false;
+                }
             }
         },
 
