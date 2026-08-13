@@ -378,7 +378,8 @@
                         if (savedEndDate) this.filters.end_date = savedEndDate;
                         if (savedSearch) this.filters.search = savedSearch;
                         if (savedSubjectType) this.filters.subject_type = savedSubjectType;
-                        if (savedCauserId) this.filters.causer_id = savedCauserId ? parseInt(savedCauserId) : null;
+                        // Kept as-is: causer ids may be UUIDs or ULIDs, which parseInt would mangle.
+                        if (savedCauserId) this.filters.causer_id = savedCauserId;
 
                         if (savedEventTypes) {
                             try {

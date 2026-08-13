@@ -573,19 +573,37 @@ class ActivityLogController extends Controller
     }
 
     /**
-     * Sanitize ID parameter to ensure proper type.
+     * Normalise a causer or subject id from the request.
+     *
+     * Host applications key their models on auto-increment integers, UUIDs or
+     * ULIDs, so a non-numeric id is a legitimate value and is passed through
+     * rather than discarded.
      */
-    private function sanitizeId(mixed $id): ?int
+    private function sanitizeId(mixed $id): int|string|null
     {
-        if ($id === null || $id === '') {
+        if (is_int($id)) {
+            return $id;
+        }
+
+        if (!is_string($id) || $id === '') {
             return null;
         }
 
-        if (is_numeric($id)) {
+        // Only a canonical integer literal is treated as an integer key. is_numeric()
+        // is too loose here: it accepts '1e3' and '5.9', and it also matches an
+        // all-digit ULID, which would then be cast to a completely different value.
+        if (preg_match('/^-?\\d+$/', $id) === 1 && $id === (string) (int) $id) {
             return (int) $id;
         }
 
-        return null;
+        // Otherwise only accept shapes that can plausibly be a key. Passing arbitrary
+        // text through reaches the driver, and an integer key column then behaves
+        // three different ways: MySQL coerces ('5abc' matches 5), PostgreSQL errors,
+        // SQLite matches nothing.
+        return preg_match('/^[A-Za-z0-9_-]{1,64}$/', $id) === 1
+            || preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/', $id) === 1
+                ? $id
+                : null;
     }
 
     /**

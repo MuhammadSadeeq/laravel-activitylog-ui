@@ -76,8 +76,9 @@ class AnalyticsService
         }
 
         if (!empty($filters['causer_id'])) {
-            $causerId = is_string($filters['causer_id']) ? (int) $filters['causer_id'] : $filters['causer_id'];
-            $query->where('causer_id', $causerId);
+            // Casting to int here silently destroyed UUID and ULID causer keys.
+            $causerId = $filters['causer_id'];
+            $query->where('causer_id', is_numeric($causerId) ? (int) $causerId : $causerId);
         }
 
         if (!empty($filters['subject_type'])) {
