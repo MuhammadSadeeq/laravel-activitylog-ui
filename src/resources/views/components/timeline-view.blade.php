@@ -123,7 +123,7 @@
                             <div x-show="expanded"
                                  x-collapse
                                  class="mt-3 space-y-3">
-                                <template x-if="changes.old">
+                                <template x-if="changes && changes.old">
                                     <div>
                                         <h5 class="text-xs font-semibold text-red-600 dark:text-red-400 mb-2 flex items-center">
                                             <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -136,7 +136,7 @@
                                     </div>
                                 </template>
 
-                                <template x-if="changes.attributes">
+                                <template x-if="changes && changes.attributes">
                                     <div>
                                         <h5 class="text-xs font-semibold text-green-600 dark:text-green-400 mb-2 flex items-center">
                                             <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
