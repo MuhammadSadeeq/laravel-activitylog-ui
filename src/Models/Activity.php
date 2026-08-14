@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\MorphTypes;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\SafeMorphTo;
@@ -41,9 +42,14 @@ class Activity extends SpatieActivity
      */
     public function causer(): MorphTo
     {
-        $relation = $this->morphTo()->withoutGlobalScopes();
-
-        return $this->withDefaultUnlessTypeMissing($relation, 'causer_type');
+        // No withDefault(): on a morphTo there is no single related class, so
+        // Eloquent's default is an instance of THIS model. initRelation() seeds
+        // every row with it before matching, so an eager load handed back an
+        // Activity posing as the causer — which is why the null-check in
+        // getAvailableCausers() never filtered anything, and which recursed
+        // without end once causer_name was appended and serialised.
+        // Null is the honest answer; the accessors fall back to type and id.
+        return $this->morphTo()->withoutGlobalScopes();
     }
 
     /**
@@ -60,31 +66,11 @@ class Activity extends SpatieActivity
             $relation->withoutGlobalScope(SoftDeletingScope::class);
         }
 
-        return $this->withDefaultUnlessTypeMissing($relation, 'subject_type');
+        // See causer(): withDefault() on a morphTo yields an instance of this
+        // model, which is never the right answer.
+        return $relation;
     }
 
-    /**
-     * Apply withDefault() only when the recorded type still resolves.
-     *
-     * For a type whose class is gone, a default instance would be an empty
-     * Activity standing in for the missing record — worse than null, because it
-     * serialises into the API response as though a subject were loaded.
-     */
-    protected function withDefaultUnlessTypeMissing(MorphTo $relation, string $typeColumn): MorphTo
-    {
-        $type = $this->getAttributeFromArray($typeColumn);
-
-        // No recorded type means there is genuinely no related record, and a type
-        // whose class is gone cannot be instantiated. In both cases withDefault()
-        // fabricates an instance of THIS model as the causer/subject — which is
-        // wrong on its face, and recurses without end once causer_name is appended
-        // and serialised.
-        if ($type === null || $type === '' || MorphTypes::missing($type)) {
-            return $relation;
-        }
-
-        return $relation->withDefault();
-    }
 
     /**
      * Use a MorphTo that tolerates recorded types whose class is gone.
@@ -313,13 +299,41 @@ class Activity extends SpatieActivity
 
         // Which attributes to try is configurable: not every application keys its
         // users on `name`, and hardcoding it made those causers show as "Unknown".
-        $attributes = config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']);
+        return $this->causerNameUsing(
+            (array) config('activitylog-ui.ui.causer_name_attributes', ['name', 'email'])
+        );
+    }
 
-        foreach ((array) $attributes as $attribute) {
+    /**
+     * Resolve the causer's display name from a specific list of attributes.
+     *
+     * Separate from the accessor so callers that must not fall back to certain
+     * attributes — the filter options endpoint, which honours
+     * filters.expose_causer_email — can narrow the list.
+     *
+     * @param  array<int, string>  $attributes
+     */
+    public function causerNameUsing(array $attributes): string
+    {
+        if (!$this->causer) {
+            return $this->causer_type
+                ? class_basename($this->causer_type) . " #{$this->causer_id}"
+                : 'System';
+        }
+
+        foreach ($attributes as $attribute) {
             try {
                 $value = $this->causer->{$attribute} ?? null;
-            } catch (\Throwable) {
-                // A host accessor or cast may throw; try the next candidate.
+            } catch (\Throwable $e) {
+                // A host accessor or cast may throw. Carry on to the next candidate
+                // rather than failing the page, but say so: silently changing which
+                // identity is displayed is not something to do quietly.
+                Log::warning('Activity log UI could not read a causer display attribute.', [
+                    'causer_type' => $this->causer_type,
+                    'attribute' => $attribute,
+                    'error' => $e->getMessage(),
+                ]);
+
                 continue;
             }
 

@@ -325,7 +325,16 @@ class ActivitylogService
      */
     public function getAvailableCausers(): Collection
     {
-        return $this->rememberFilterOptions('causers', function () {
+        // When email exposure is off, it must not sneak back in through the display
+        // name: causer_name falls back to email, so a causer without a name would
+        // otherwise publish the very address the flag withholds.
+        $displayAttributes = (array) config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']);
+
+        if (!config('activitylog-ui.filters.expose_causer_email', false)) {
+            $displayAttributes = array_values(array_diff($displayAttributes, ['email']));
+        }
+
+        return $this->rememberFilterOptions('causers', function () use ($displayAttributes) {
             return Activity::select('causer_type', 'causer_id')
                 ->whereNotNull('causer_type')
                 ->whereNotNull('causer_id')
@@ -335,13 +344,15 @@ class ActivitylogService
                 ->filter(function ($activity) {
                     return $activity->causer !== null;
                 })
-                ->map(function ($activity) {
+                ->map(function ($activity) use ($displayAttributes) {
+                    $name = $activity->causerNameUsing($displayAttributes);
+
                     return [
                         'id' => $activity->causer_id,
                         'type' => $activity->causer_type,
-                        'name' => $activity->causer_name,
+                        'name' => $name,
                         'email' => $this->causerEmail($activity),
-                        'label' => $activity->causer_name . ' (' . class_basename($activity->causer_type) . ')',
+                        'label' => $name . ' (' . class_basename($activity->causer_type) . ')',
                     ];
                 })
                 // Keyed by type AND id: causers are polymorphic, so App\Models\User#7

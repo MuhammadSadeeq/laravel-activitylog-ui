@@ -436,7 +436,7 @@ class AnalyticsService
     /**
      * Get user activity profile.
      */
-    public function getUserActivityProfile(int $userId, string $userType): array
+    public function getUserActivityProfile(int|string $userId, string $userType): array
     {
         $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . ".user_profile.{$userType}.{$userId}";
 
@@ -452,7 +452,9 @@ class AnalyticsService
 
         $activities = Activity::where('causer_type', $userType)
             ->where('causer_id', $userId)
-            ->with('subject')
+            // causer as well as subject: the appended causer_name accessor reads it
+            // during serialisation, so omitting it cost one query per row.
+            ->with(['causer', 'subject'])
             ->get();
 
         // Everything stored here is reduced to plain arrays and scalars. This used

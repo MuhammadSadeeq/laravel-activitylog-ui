@@ -35,8 +35,14 @@ class ExportController extends Controller
         ]);
 
         $format = $request->input('format');
-        $filters = $request->input('filters', []);
         $options = $request->input('options', []);
+
+        // Filters arrive nested in a JSON body, so they never pass through the
+        // dashboard's own extraction. Normalise them the same way: `filters` is
+        // only validated as an array, and a nested array inside it reaches a
+        // string-typed scope and throws before the try block below.
+        $filters = app(ActivityLogController::class)
+            ->normalizeFilters(is_array($request->input('filters')) ? $request->input('filters') : []);
 
         // Add filters to options for proper tracking
         $options['applied_filters'] = $filters;

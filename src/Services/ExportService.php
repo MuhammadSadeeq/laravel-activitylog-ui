@@ -58,6 +58,10 @@ class ExportService
         $activities = new Collection();
 
         Activity::query()
+            // Every format reads causer_name, and JSON reads subject_name too, so
+            // without this each exported row cost a query of its own: roughly
+            // 10,000 extra statements on a 10,000-row export.
+            ->with(['causer', 'subject'])
             ->when($filters, function ($query) use ($filters) {
                 return App::make(ActivitylogService::class)->applyFilters($query, $filters);
             })
@@ -393,7 +397,7 @@ class ExportService
     /**
      * Queue an export job for large datasets.
      */
-    public function queueExport(array $filters, string $format, array $options = [], ?int $userId = null): string
+    public function queueExport(array $filters, string $format, array $options = [], int|string|null $userId = null): string
     {
         $jobId = uniqid('export_');
 

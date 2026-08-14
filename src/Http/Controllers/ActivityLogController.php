@@ -31,8 +31,8 @@ class ActivityLogController extends Controller
         $this->authorize('viewActivityLogUi');
 
         $filters = $this->getFiltersFromRequest($request);
-        $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
-        $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, 500);
+        $view = $this->stringInput($request, 'view', (string) config('activitylog-ui.ui.default_view', 'table'));
+        $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, $this->maxPerPage());
 
         $data = ['filters' => $filters, 'view' => $view, 'perPage' => $perPage];
 
@@ -91,8 +91,8 @@ class ActivityLogController extends Controller
         $this->authorize('viewActivityLogUi');
 
         $filters = $this->getFiltersFromRequest($request);
-        $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
-        $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, 500);
+        $view = $this->stringInput($request, 'view', (string) config('activitylog-ui.ui.default_view', 'table'));
+        $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, $this->maxPerPage());
 
         if ($view === 'timeline') {
             $data = $this->activitylogService->getTimelineActivities($filters, $perPage);
@@ -265,7 +265,7 @@ class ActivityLogController extends Controller
     /**
      * Get user activity profile.
      */
-    public function userProfile(Request $request, int $userId): JsonResponse
+    public function userProfile(Request $request, int|string $userId): JsonResponse
     {
         $this->authorize('viewActivityLogUi');
 
@@ -325,7 +325,7 @@ class ActivityLogController extends Controller
 
         try {
             $filters = $this->getFiltersFromRequest($request);
-            $perPage = $this->intInput($request, 'per_page', 25, 1, 500);
+            $perPage = $this->intInput($request, 'per_page', 25, 1, $this->maxPerPage());
 
             $activities = $this->activitylogService->getActivities($filters, $perPage);
 
@@ -554,6 +554,23 @@ class ActivityLogController extends Controller
     }
 
 
+
+    /**
+     * Largest per_page the UI is allowed to request.
+     *
+     * Derived from the configured options so a host that offers 1000 rows gets
+     * 1000, rather than silently receiving 500 while the selector still says 1000.
+     */
+    protected function maxPerPage(): int
+    {
+        $options = array_filter((array) config('activitylog-ui.ui.per_page_options', [10, 25, 50, 100]), 'is_numeric');
+        $configured = $options ? (int) max($options) : 100;
+
+        // Still bounded: an option list is a UI affordance, not a licence to load
+        // the entire table in one request.
+        return (int) min(1000, max(1, $configured));
+    }
+
     /**
      * Read a bounded integer from the request.
      *
@@ -587,7 +604,11 @@ class ActivityLogController extends Controller
      */
     protected function getFiltersFromRequest(Request $request): array
     {
-        return [
+        // Every one of these ends up in a scope typed ?string. Passing the raw
+        // input meant `?search[]=x`, `?date_preset[]=today` and friends reached
+        // those scopes as arrays and raised a TypeError, so normalise the shape
+        // here rather than at each call site.
+        return $this->normalizeFilters([
             'search' => $request->input('search'),
             'date_preset' => $request->input('date_preset'),
             'start_date' => $request->input('start_date'),
@@ -598,7 +619,49 @@ class ActivityLogController extends Controller
             'subject_id' => $this->sanitizeId($request->input('subject_id')),
             'event_types' => $this->getArrayFromRequest($request, 'event_types'),
             'property_key' => $request->input('property_key'),
-        ];
+        ]);
+    }
+
+    /**
+     * Coerce a filter set into the shapes the query layer accepts.
+     *
+     * Public so the export endpoint, which receives filters nested inside a JSON
+     * body and so never passes through getFiltersFromRequest(), can use it too.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function normalizeFilters(array $filters): array
+    {
+        $strings = ['search', 'date_preset', 'start_date', 'end_date', 'causer_type', 'subject_type', 'property_key'];
+
+        foreach ($strings as $key) {
+            if (!array_key_exists($key, $filters)) {
+                continue;
+            }
+
+            $value = $filters[$key];
+            $filters[$key] = is_scalar($value) ? (string) $value : null;
+        }
+
+        if (array_key_exists('event_types', $filters)) {
+            $types = is_array($filters['event_types']) ? $filters['event_types'] : [$filters['event_types']];
+
+            // Flat list of non-empty strings: a nested array reaches whereIn() and
+            // becomes an unbindable parameter.
+            $filters['event_types'] = array_values(array_filter(
+                array_map(fn ($type) => is_scalar($type) ? (string) $type : null, $types),
+                fn ($type) => $type !== null && $type !== ''
+            ));
+        }
+
+        foreach (['causer_id', 'subject_id'] as $key) {
+            if (array_key_exists($key, $filters)) {
+                $filters[$key] = $this->sanitizeId($filters[$key]);
+            }
+        }
+
+        return $filters;
     }
 
     /**

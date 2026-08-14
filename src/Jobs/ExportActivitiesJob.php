@@ -24,12 +24,12 @@ class ExportActivitiesJob implements ShouldQueue
     protected array $filters;
     protected string $format;
     protected array $options;
-    protected ?int $userId;
+    protected int|string|null $userId;
 
     /**
      * Create a new job instance.
      */
-    public function __construct(string $jobId, array $filters, string $format, array $options = [], ?int $userId = null)
+    public function __construct(string $jobId, array $filters, string $format, array $options = [], int|string|null $userId = null)
     {
         $this->jobId = $jobId;
         $this->filters = $filters;
