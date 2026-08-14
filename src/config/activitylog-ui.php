@@ -35,12 +35,17 @@ return [
     | Authorization Configuration
     |--------------------------------------------------------------------------
     |
-    | When enabled=false: No authentication required (public access)
-    | When enabled=true: Requires authentication + gate/policy checks
+    | When enabled=true:  requires authentication, then the gate below.
+    | When enabled=false: the entire UI is public. Anyone who can reach the URL
+    |                     can read who did what, when, and to which record.
+    |
+    | The default gate allows any authenticated user, and narrows to the
+    | access.allowed_users / access.allowed_roles lists once you set them.
+    | Turn this off only for local development.
     |
     */
     'authorization' => [
-        'enabled' => false,
+        'enabled' => env('ACTIVITYLOG_UI_AUTHORIZATION', true),
         'gate' => 'viewActivityLogUi',
         'policy' => null,
         'guard' => null,

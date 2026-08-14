@@ -15,7 +15,7 @@ class ActivityLogAccessMiddleware
     public function handle(Request $request, Closure $next): Response
     {
         // If authorization is completely disabled, allow access
-        if (!config('activitylog-ui.authorization.enabled', false)) {
+        if (!config('activitylog-ui.authorization.enabled', true)) {
             // Still check access controls if they are defined
             $allowedUsers = config('activitylog-ui.access.allowed_users', []);
             $allowedRoles = config('activitylog-ui.access.allowed_roles', []);

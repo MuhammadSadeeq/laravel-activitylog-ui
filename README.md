@@ -94,7 +94,7 @@ return [
     ],
 
     'authorization' => [
-        'enabled' => false,           // true => uses Gate / auth middleware
+        'enabled' => true,            // false => the UI is fully public
         'gate'    => 'viewActivityLogUi',
     ],
 
@@ -126,9 +126,9 @@ Refer to the inline comments in the file for every available option.
 
 ## 🔐 Authorization & Access Control
 
-* **Gate:** `viewActivityLogUi` is auto-registered (see `ActivitylogUiServiceProvider`).  You may define it in your own code or rely on the package’s default email/role checks.
-* **Toggle authentication:** Set `authorization.enabled` to `true` to require login + gate.
-* **Granular lists:** `access.allowed_users` and `access.allowed_roles` let you open the UI to a subset of users—regardless of the gate.
+* **On by default:** `authorization.enabled` defaults to `true`, so the UI requires a logged-in user who passes the gate. Setting it to `false` makes the whole UI public — anyone who can reach the URL can read who did what, when, and to which record. Use it for local development only. It can also be set per-environment with `ACTIVITYLOG_UI_AUTHORIZATION=false`.
+* **Gate:** `viewActivityLogUi` is auto-registered (see `ActivitylogUiServiceProvider`). By default it allows any authenticated user, and narrows to the lists below once you set them. Define your own to replace that logic.
+* **Granular lists:** `access.allowed_users` and `access.allowed_roles` restrict the UI to a subset of users. These are enforced even when `authorization.enabled` is `false`.
 
 ---
 

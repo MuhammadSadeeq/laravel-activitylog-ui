@@ -8,10 +8,17 @@ $config = config('activitylog-ui.route', []);
 $prefix = $config['prefix'] ?? 'activitylog-ui';
 $name = $config['name'] ?? 'activitylog-ui.';
 
-// Build middleware based on authorization configuration
+// Build middleware based on authorization configuration.
+// The fallback is true so that a missing or partial config fails closed; the
+// controllers already assumed true here while this file assumed false.
 $middleware = ['web'];
-if (config('activitylog-ui.authorization.enabled', false)) {
+if (config('activitylog-ui.authorization.enabled', true)) {
     $middleware[] = 'auth';
+    $middleware[] = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
+} elseif (config('activitylog-ui.access.allowed_users') || config('activitylog-ui.access.allowed_roles')) {
+    // The middleware enforces these lists even with authorization disabled, but
+    // it was only ever registered when authorization was enabled — so anyone who
+    // set them while leaving authorization off got no protection at all.
     $middleware[] = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
 }
 
