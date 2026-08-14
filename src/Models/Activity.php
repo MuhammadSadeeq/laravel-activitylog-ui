@@ -23,18 +23,101 @@ class Activity extends SpatieActivity
      */
     protected $appends = ['causer_name'];
 
-    protected static ?bool $hasAttributeChangesColumn = null;
+    /**
+     * Cached per connection and table, because both are now resolved from the
+     * host's configured activity model and can differ between them.
+     *
+     * @var array<string, bool>
+     */
+    protected static array $hasAttributeChangesColumn = [];
+
+    public function __construct(array $attributes = [])
+    {
+        parent::__construct($attributes);
+
+        // Spatie v5 dropped activitylog.table_name and database_connection, so a
+        // custom model registered as activitylog.activity_model is the only way
+        // left to move the log elsewhere. Read where it points and follow it —
+        // otherwise the UI reads activity_log while the application writes
+        // somewhere else entirely (issue #9).
+        if (($source = static::configuredActivitySource()) !== null) {
+            $this->setTable($source['table']);
+            $this->setConnection($source['connection']);
+        }
+    }
+
+    /**
+     * Table and connection declared by the host's configured activity model.
+     *
+     * Memoised on the configured class name so a class swapped at runtime — or a
+     * long-lived worker that outlives a config change — produces a different key
+     * rather than a stale answer.
+     *
+     * @var array<string, array{table: string, connection: string|null}|null>
+     */
+    protected static array $activitySourceCache = [];
+
+    /**
+     * @return array{table: string, connection: string|null}|null
+     */
+    protected static function configuredActivitySource(): ?array
+    {
+        $class = config('activitylog.activity_model');
+
+        if (!is_string($class) || $class === '') {
+            return null;
+        }
+
+        // Our own model, or anything extending it, would re-enter this
+        // constructor and recurse.
+        if (is_a($class, self::class, true)) {
+            return null;
+        }
+
+        if (array_key_exists($class, static::$activitySourceCache)) {
+            return static::$activitySourceCache[$class];
+        }
+
+        $source = null;
+
+        try {
+            if (class_exists($class) && is_a($class, Model::class, true)) {
+                $instance = new $class;
+
+                $source = [
+                    'table' => $instance->getTable(),
+                    'connection' => $instance->getConnectionName(),
+                ];
+            }
+        } catch (\Throwable $e) {
+            // A broken custom model should not take the UI down; it just means
+            // falling back to the default table, which is worth saying out loud.
+            Log::warning('Activity log UI could not read the configured activity model; using the default table.', [
+                'activity_model' => $class,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return static::$activitySourceCache[$class] = $source;
+    }
+
+    /**
+     * Forget the resolved source. Intended for tests and long-lived workers.
+     */
+    public static function flushConfiguredActivitySource(): void
+    {
+        static::$activitySourceCache = [];
+        static::$hasAttributeChangesColumn = [];
+    }
 
     public static function hasAttributeChangesColumn(): bool
     {
-        if (static::$hasAttributeChangesColumn === null) {
-            $model = new static();
+        $model = new static();
+        $connection = $model->getConnectionName();
+        $key = ($connection ?? 'default') . '.' . $model->getTable();
 
-            static::$hasAttributeChangesColumn = Schema::connection($model->getConnectionName())
-                ->hasColumn($model->getTable(), 'attribute_changes');
-        }
-
-        return static::$hasAttributeChangesColumn;
+        return static::$hasAttributeChangesColumn[$key] ??= Schema::connection($connection)
+            ->hasColumn($model->getTable(), 'attribute_changes');
     }
 
     /**

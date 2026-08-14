@@ -124,6 +124,33 @@ Refer to the inline comments in the file for every available option.
 
 ---
 
+## 🗄️ Custom Table or Connection
+
+Spatie v5 removed the `activitylog.table_name` and `activitylog.database_connection`
+settings. The supported way to move the log is a custom Activity model:
+
+```php
+use Spatie\Activitylog\Models\Activity as BaseActivity;
+
+class Activity extends BaseActivity
+{
+    protected $table = 'my_activity_log';
+    protected $connection = 'my_connection';
+}
+```
+
+```php
+// config/activitylog.php
+'activity_model' => \App\Models\Activity::class,
+```
+
+This UI reads that model's table and connection, so it follows the log wherever
+you put it — no additional configuration here. Note it reads the *location*, not
+the model itself: scopes, casts and accessors you add to your model are not used
+by the UI's queries.
+
+---
+
 ## 🔐 Authorization & Access Control
 
 Access is decided in this order:
