@@ -38,6 +38,8 @@ v2.0 is a breaking release targeting Spatie laravel-activitylog v5. See **[UPGRA
 * [spatie/laravel-activitylog](https://github.com/spatie/laravel-activitylog) ≥ 5.0 (already logging your activities)
 * Database table `activity_log` with Spatie v5’s schema (includes `attribute_changes` column)
 
+> **On Laravel 12** Composer resolves `spatie/laravel-activitylog` to **5.0.0**, because 5.1.0 requires `illuminate/* ^13.0`. The schema and everything in this package behave the same on both; you are simply pinned to 5.0.x until you move to Laravel 13. Verified against Laravel 12.66 / Spatie 5.0.0 and Laravel 13.25 / Spatie 5.1.0.
+
 ### Optional (for export)
 
 | Feature | Package | Version |
