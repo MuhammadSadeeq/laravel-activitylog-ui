@@ -258,12 +258,28 @@ class AnalyticsService
             $startDate = $endDate->copy()->subDays($maxDays);
         }
 
-        // Generate timeline data for each day in the range
+        // One grouped query for the whole range. This used to be a COUNT per day
+        // with the full filter set re-applied each time, so a 90-day window cost
+        // 91 round trips — and with a search term each of those carried a
+        // whereHasMorph across every causer table.
+        $expression = $this->dateExpression();
+
+        $query = Activity::query()
+            ->selectRaw("{$expression} as day, count(*) as aggregate")
+            ->whereBetween('created_at', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()]);
+
+        $this->applyFilters($query, $filters);
+
+        $counts = $query->groupBy(DB::raw($expression))
+            ->pluck('aggregate', 'day')
+            // Drivers return this as a date string, a datetime, or a date object
+            // depending on the cast; the day is the first ten characters of all
+            // of them.
+            ->mapWithKeys(fn ($count, $day) => [substr((string) $day, 0, 10) => (int) $count]);
+
         $currentDate = $startDate->copy();
         while ($currentDate <= $endDate) {
-            $query = Activity::whereDate('created_at', $currentDate->toDateString());
-            $this->applyFilters($query, $filters);
-            $count = $query->count();
+            $count = $counts[$currentDate->toDateString()] ?? 0;
 
             if ($count > $maxCount) {
                 $maxCount = $count;
@@ -287,6 +303,21 @@ class AnalyticsService
         }
 
         return $days;
+    }
+
+    /**
+     * A driver-appropriate SQL expression for the date part of created_at.
+     *
+     * DATE() is MySQL, MariaDB and SQLite; PostgreSQL and SQL Server have no
+     * such function, so every grouped-by-day chart here was a syntax error on
+     * those two.
+     */
+    protected function dateExpression(string $column = 'created_at'): string
+    {
+        return match (Activity::query()->getConnection()->getDriverName()) {
+            'pgsql', 'sqlsrv' => "CAST({$column} AS DATE)",
+            default => "DATE({$column})",
+        };
     }
 
     /**
@@ -377,8 +408,10 @@ class AnalyticsService
         $endDate = isset($filters['end_date']) ? now()->parse($filters['end_date']) : now()->endOfDay();
         $startDate = isset($filters['start_date']) ? now()->parse($filters['start_date']) : $endDate->copy()->subDays($days)->startOfDay();
 
+        $expression = $this->dateExpression();
+
         $activities = Activity::select(
-                DB::raw('DATE(created_at) as date'),
+                DB::raw("{$expression} as date"),
                 DB::raw('count(*) as count'),
                 'event'
             );
@@ -386,7 +419,7 @@ class AnalyticsService
         // Apply date range and other filters
         $this->applyFilters($activities, $filters);
 
-        $activities = $activities->groupBy('date', 'event')
+        $activities = $activities->groupBy(DB::raw($expression), 'event')
             ->orderBy('date')
             ->get();
 
@@ -535,15 +568,17 @@ class AnalyticsService
         return Cache::remember($cacheKey, 3600, function () use ($days) {
             $startDate = now()->subDays($days)->startOfDay();
 
+            $expression = $this->dateExpression();
+
             $activities = Activity::select(
-                    DB::raw('DATE(created_at) as date'),
+                    DB::raw("{$expression} as date"),
                     DB::raw('count(*) as count')
                 )
                 ->where('created_at', '>=', $startDate)
-                ->groupBy('date')
+                ->groupBy(DB::raw($expression))
                 ->orderBy('date')
                 ->get()
-                ->keyBy('date');
+                ->keyBy(fn ($row) => substr((string) $row->date, 0, 10));
 
             $heatmapData = [];
             $current = $startDate->copy();
