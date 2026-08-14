@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\MorphTypes;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\SafeMorphTo;
 use Spatie\Activitylog\Contracts\Activity as ActivityContract;
@@ -227,6 +228,24 @@ class Activity extends SpatieActivity
     }
 
     /**
+     * Relate to models on their own connection, not on the activity table's.
+     *
+     * Eloquent hands a related model the parent's connection whenever it does
+     * not declare one — reasonable when everything shares a database, wrong when
+     * the activity log has its own. With activitylog.activity_model pointing at
+     * an audit database, reading a causer sent "select * from users" to that
+     * database, which has no users table.
+     *
+     * This model only relates through the causer and subject morphs, so the
+     * override is confined to them. SafeMorphTo does the same for the eager
+     * path, which builds its models separately.
+     */
+    protected function newRelatedInstance($class)
+    {
+        return new $class;
+    }
+
+    /**
      * Scope for filtering by date range.
      */
     public function scopeDateRange(Builder $query, ?string $startDate, ?string $endDate): Builder
@@ -327,10 +346,16 @@ class Activity extends SpatieActivity
             // Eloquent enumerate every distinct causer_type and instantiate each
             // one, so a single deleted class threw — and since analytics now
             // shares this filtering, that took the whole dashboard with it.
-            $types = static::searchableCauserTypes();
+            //
+            // Split by connection, because a subquery cannot reach across one.
+            // With the activity table on its own database — which resolving the
+            // model from config makes ordinary — a whereHasMorph against a causer
+            // living on the default connection emits SQL naming a table the
+            // activity connection has never heard of.
+            [$local, $remote] = static::partitionCauserTypesByConnection();
 
-            if ($types !== []) {
-                $q->orWhereHasMorph('causer', $types, function (Builder $causerQuery, string $type) use ($search) {
+            if ($local !== []) {
+                $q->orWhereHasMorph('causer', $local, function (Builder $causerQuery, string $type) use ($search) {
                     $columns = static::searchableCauserColumns($causerQuery->getModel());
 
                     if ($columns === []) {
@@ -347,6 +372,10 @@ class Activity extends SpatieActivity
                         }
                     });
                 });
+            }
+
+            foreach ($remote as $type) {
+                static::applyCrossConnectionCauserSearch($q, $type, $search);
             }
         });
     }
@@ -376,6 +405,89 @@ class Activity extends SpatieActivity
 
     /** @var array<string, array<int, string>> */
     protected static array $searchableCauserTypes = [];
+
+    /**
+     * The most causers a cross-connection search will match before it is refused.
+     *
+     * Their ids have to be carried into the activity query as bindings, and the
+     * drivers put a ceiling on how many of those a statement may have.
+     */
+    public const CROSS_CONNECTION_CAUSER_LIMIT = 500;
+
+    /**
+     * Split the searchable causer types into those a subquery can reach and
+     * those on another connection.
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>}
+     */
+    protected static function partitionCauserTypesByConnection(): array
+    {
+        $activityConnection = static::query()->getConnection()->getName();
+        $local = [];
+        $remote = [];
+
+        foreach (static::searchableCauserTypes() as $type) {
+            $class = Model::getActualClassNameForMorph($type);
+            $connection = (new $class)->getConnection()->getName();
+
+            $connection === $activityConnection
+                ? $local[] = $type
+                : $remote[] = $type;
+        }
+
+        return [$local, $remote];
+    }
+
+    /**
+     * Match a causer that lives on another connection, by id.
+     *
+     * The alternative was to drop these types from the search, which on an
+     * audit log is the wrong trade: a search that quietly cannot see a whole
+     * class of causer returns a short answer that looks complete. Their ids are
+     * resolved on their own connection and carried across instead.
+     */
+    protected static function applyCrossConnectionCauserSearch(Builder $query, string $type, string $search): void
+    {
+        $class = Model::getActualClassNameForMorph($type);
+        $causer = new $class;
+        $columns = static::searchableCauserColumns($causer);
+
+        if ($columns === []) {
+            return;
+        }
+
+        $matches = $causer->newQuery()
+            ->where(function (Builder $inner) use ($columns, $search) {
+                foreach ($columns as $column) {
+                    $inner->orWhere($column, 'like', "%{$search}%");
+                }
+            })
+            // One more than the limit, so "too many" is distinguishable from
+            // "exactly the limit" without a second count query.
+            ->limit(static::CROSS_CONNECTION_CAUSER_LIMIT + 1)
+            ->pluck($causer->getKeyName());
+
+        if ($matches->isEmpty()) {
+            return;
+        }
+
+        if ($matches->count() > static::CROSS_CONNECTION_CAUSER_LIMIT) {
+            // Refused rather than silently truncated. Returning the first 500
+            // would answer with a subset and present it as the whole result.
+            throw ValidationException::withMessages([
+                'search' => sprintf(
+                    'That search matches more than %d %s records, which are stored on a separate database connection. Narrow the search.',
+                    static::CROSS_CONNECTION_CAUSER_LIMIT,
+                    class_basename($class)
+                ),
+            ]);
+        }
+
+        $query->orWhere(function (Builder $inner) use ($type, $matches) {
+            $inner->where('causer_type', $type)
+                ->whereIn('causer_id', $matches->all());
+        });
+    }
 
     /**
      * Forget what has been memoised about the causer tables.

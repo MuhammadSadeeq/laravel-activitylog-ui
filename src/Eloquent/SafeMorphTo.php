@@ -56,6 +56,32 @@ class SafeMorphTo extends MorphTo
     /**
      * {@inheritdoc}
      *
+     * Resolves the related model on its OWN connection.
+     *
+     * Eloquent points a morph target at the parent's connection whenever the
+     * target does not declare one of its own. That is a fair default when
+     * everything shares a database, but the activity table does not have to:
+     * pointing activitylog.activity_model at a model with its own $connection —
+     * an audit database, a reporting replica — is a supported setup, and this
+     * package resolves the table from that model. Inheriting the parent's
+     * connection then sent "select * from users where id in (...)" to the audit
+     * connection, which has no users table, and every listing failed.
+     *
+     * Leaving the model alone means it resolves the way it does everywhere else
+     * in the application: its declared connection, or the application default.
+     * An application whose models live somewhere their own configuration does
+     * not name is already broken outside this package.
+     */
+    public function createModelByType($type)
+    {
+        $class = Model::getActualClassNameForMorph($type);
+
+        return new $class;
+    }
+
+    /**
+     * {@inheritdoc}
+     *
      * Avoids a guaranteed-empty query per row on the lazy path.
      */
     public function getResults()
