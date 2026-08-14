@@ -160,11 +160,11 @@ function activityDashboard() {
             this.filterChangedHandler = (event) => {
                 this.currentFilters = event.detail || {};
                 this.currentPage = 1; // Reset to first page
-                this.loadActivities();
 
-                // Also reload analytics if on analytics view
-                if (this.currentView === 'analytics') {
-                    this.reloadAnalytics();
+                // Analytics listens for this event itself, and does not render
+                // the activity list, so there is nothing to fetch for it here.
+                if (this.currentView !== 'analytics') {
+                    this.loadActivities();
                 }
             };
 
@@ -449,16 +449,10 @@ function activityDashboard() {
         },
 
         // Reload analytics with current filters
-        reloadAnalytics() {
-            // Find the analytics component and reload it
-            const analyticsComponent = document.querySelector('[x-data*="analyticsDashboard"]');
-            if (analyticsComponent && analyticsComponent._x_dataStack) {
-                const component = analyticsComponent._x_dataStack[0];
-                if (component && component.loadAnalytics) {
-                    component.loadAnalytics(this.currentFilters);
-                }
-            }
-        }
+        // reloadAnalytics() used to live here, querying the DOM for
+        // [x-data*="analyticsDashboard"] — a component name that does not exist,
+        // so it matched nothing and silently did nothing. The analytics component
+        // now listens for filter-changed itself.
     }
 }
 </script>

@@ -301,9 +301,38 @@ document.addEventListener('alpine:init', () => {
         customStartDate: '',
         customEndDate: '',
         chart: null,
+        // Filters coming from the shared filter panel, kept separate from this
+        // component's own period selection.
+        dashboardFilters: {},
+        hasLoaded: false,
 
         init() {
-            this.loadAnalytics();
+            // This component is rendered on every page load, not just the
+            // analytics view, so fetching here unconditionally meant a wasted
+            // analytics request behind every table and timeline page.
+            if (this.currentView === 'analytics') {
+                this.loadAnalytics();
+            }
+
+            this.$watch('currentView', view => {
+                if (view === 'analytics' && !this.hasLoaded) {
+                    this.loadAnalytics();
+                }
+            });
+
+            // The dashboard used to reach in here through the DOM to push
+            // filters, matching on a component name that never existed. Listening
+            // directly is both correct and less fragile.
+            const onFilters = event => {
+                this.dashboardFilters = event.detail || {};
+
+                if (this.currentView === 'analytics') {
+                    this.loadAnalytics();
+                }
+            };
+
+            window.addEventListener('filter-changed', onFilters);
+            window.addEventListener('filter-panel-ready', onFilters);
         },
 
         async loadAnalytics() {
@@ -311,6 +340,17 @@ document.addEventListener('alpine:init', () => {
                 this.loading = true;
                 let url = '{{ route("activitylog-ui.api.analytics") }}';
                 let params = new URLSearchParams();
+
+                // Filter-panel selections first, so analytics reflects the same
+                // slice of the log as the table and timeline.
+                Object.entries(this.dashboardFilters || {}).forEach(([key, value]) => {
+                    if (value === null || value === undefined || value === '') return;
+                    if (Array.isArray(value)) {
+                        value.forEach(item => params.append(`${key}[]`, item));
+                    } else {
+                        params.append(key, value);
+                    }
+                });
 
                 if (this.selectedPeriod === 'custom') {
                     if (this.customStartDate) params.append('start_date', this.customStartDate);
@@ -357,6 +397,7 @@ document.addEventListener('alpine:init', () => {
                 }
             } finally {
                 this.loading = false;
+                this.hasLoaded = true;
             }
         },
 
