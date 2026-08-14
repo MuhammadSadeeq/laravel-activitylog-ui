@@ -342,7 +342,10 @@ class ActivitylogService
                         'label' => $activity->causer_name . ' (' . class_basename($activity->causer_type) . ')',
                     ];
                 })
-                ->unique('id')
+                // Keyed by type AND id: causers are polymorphic, so App\Models\User#7
+                // and App\Models\Admin#7 are different people. Deduplicating on id
+                // alone dropped one of them from the dropdown entirely.
+                ->unique(fn (array $causer) => $causer['type'] . '#' . $causer['id'])
                 ->values()
                 ->all();
         });

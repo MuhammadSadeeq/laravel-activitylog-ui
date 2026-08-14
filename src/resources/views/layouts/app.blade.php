@@ -121,6 +121,7 @@
                             end_date: '',
                             event_types: [],
                             causer_id: null,
+                            causer_type: null,
                             subject_type: '',
                         };
                     },
@@ -247,7 +248,10 @@
 
                     selectCauser(causer) {
                         this.selectedCauser = causer;
-                        this.filters.causer_id = causer?.id || null;
+                        this.filters.causer_id = causer?.id ?? null;
+                        // Sent alongside the id: without it, picking one causer
+                        // matches every model type that happens to share that id.
+                        this.filters.causer_type = causer?.type ?? null;
                         this.applyFilters();
                     },
 
@@ -333,6 +337,7 @@
                         localStorage.removeItem('activitylog_search');
                         localStorage.removeItem('activitylog_event_types');
                         localStorage.removeItem('activitylog_causer_id');
+                        localStorage.removeItem('activitylog_causer_type');
                         localStorage.removeItem('activitylog_subject_type');
                         localStorage.removeItem('activitylog_selected_causer');
 
@@ -370,6 +375,7 @@
                         const savedSearch = localStorage.getItem('activitylog_search');
                         const savedEventTypes = localStorage.getItem('activitylog_event_types');
                         const savedCauserId = localStorage.getItem('activitylog_causer_id');
+                        const savedCauserType = localStorage.getItem('activitylog_causer_type');
                         const savedSubjectType = localStorage.getItem('activitylog_subject_type');
                         const savedSelectedCauser = localStorage.getItem('activitylog_selected_causer');
 
@@ -380,6 +386,9 @@
                         if (savedSubjectType) this.filters.subject_type = savedSubjectType;
                         // Kept as-is: causer ids may be UUIDs or ULIDs, which parseInt would mangle.
                         if (savedCauserId) this.filters.causer_id = savedCauserId;
+                        // Restored with the id, or a polymorphic causer filter loses
+                        // its type and matches every model sharing that id.
+                        if (savedCauserType) this.filters.causer_type = savedCauserType;
 
                         if (savedEventTypes) {
                             try {

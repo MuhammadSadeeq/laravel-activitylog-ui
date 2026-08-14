@@ -19,6 +19,9 @@
          $watch('filters.causer_id', value => {
              localStorage.setItem('activitylog_causer_id', value || '');
          });
+         $watch('filters.causer_type', value => {
+             localStorage.setItem('activitylog_causer_type', value || '');
+         });
          $watch('filters.subject_type', value => {
              localStorage.setItem('activitylog_subject_type', value || '');
          });
