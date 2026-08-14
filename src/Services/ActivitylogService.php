@@ -15,14 +15,25 @@ class ActivitylogService
 {
     /**
      * Get filtered activities with pagination.
+     *
+     * $anchorId pins the result set to the rows that existed when the first page
+     * was read. Offsets are counted from the top of a list ordered newest-first,
+     * so on an audit log — which is written to continuously, by definition — every
+     * activity recorded between two page requests pushed the whole list down and
+     * the next page repeated rows the user had already seen. Ten new rows while
+     * reading page 1 meant page 2 opened with the last ten rows of page 1.
      */
-    public function getActivities(array $filters = [], int $perPage = 25): LengthAwarePaginator
+    public function getActivities(array $filters = [], int $perPage = 25, int|string|null $anchorId = null): LengthAwarePaginator
     {
         $query = Activity::query()
             ->with(config('activitylog-ui.performance.eager_load_relations', ['causer', 'subject']))
             ->latest('id');
 
         $query = $this->applyFilters($query, $filters);
+
+        if ($anchorId !== null) {
+            $query->where((new Activity)->getQualifiedKeyName(), '<=', $anchorId);
+        }
 
         return $query->paginate($perPage);
     }

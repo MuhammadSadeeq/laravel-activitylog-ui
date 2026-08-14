@@ -327,7 +327,12 @@ class ActivityLogController extends Controller
             $filters = $this->getFiltersFromRequest($request);
             $perPage = $this->intInput($request, 'per_page', 25, 1, $this->maxPerPage());
 
-            $activities = $this->activitylogService->getActivities($filters, $perPage);
+            // Pins later pages to the rows that existed when the first one was
+            // read, so activities recorded in between do not push the list down
+            // and make the next page repeat what the user has already seen.
+            $anchorId = $this->sanitizeId($request->input('anchor_id'));
+
+            $activities = $this->activitylogService->getActivities($filters, $perPage, $anchorId);
 
             return response()->json([
                 'data' => $activities->items(),
@@ -337,6 +342,13 @@ class ActivityLogController extends Controller
                 'last_page' => $activities->lastPage(),
                 'from' => $activities->firstItem(),
                 'to' => $activities->lastItem(),
+                // The list is ordered newest-first, so the first row of the first
+                // page carries the anchor for every page after it. Echoed back
+                // when one was supplied, so a client can keep using the same one.
+                // Only page 1 can mint one: the first row of any later page is
+                // partway down the list, and pinning to it would silently hide
+                // everything above.
+                'anchor_id' => $anchorId ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null),
             ]);
         } catch (\Throwable $e) {
             // Log the error for debugging

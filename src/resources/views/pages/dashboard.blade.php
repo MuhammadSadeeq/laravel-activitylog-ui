@@ -146,6 +146,10 @@ function activityDashboard() {
         currentPage: 1,
         perPage: {{ config('activitylog-ui.ui.default_per_page', 25) }},
         totalPages: 1,
+        // Id of the newest row this listing is pinned to. Taken from the first
+        // page and sent with every page after it, so activities recorded while
+        // the user reads do not shift the offsets underneath them.
+        anchorId: null,
         showExportModal: false,
         @if(config('activitylog-ui.features.saved_views', true))
         showSaveViewModal: false,
@@ -226,11 +230,21 @@ function activityDashboard() {
             this.requestToken++;
             this.loadingMore = false;
 
+            // Page 1 is always a fresh look at the newest rows, so it re-anchors;
+            // every other page is a move within the listing page 1 established.
+            if (page === 1) {
+                this.anchorId = null;
+            }
+
             try {
                 // Build query parameters
                 const params = new URLSearchParams();
                 params.append('page', page);
                 params.append('per_page', this.perPage);
+
+                if (this.anchorId !== null && this.anchorId !== undefined) {
+                    params.append('anchor_id', this.anchorId);
+                }
 
                 // Add filters to params
                 Object.keys(this.currentFilters || {}).forEach(key => {
@@ -262,11 +276,13 @@ function activityDashboard() {
                 this.activities = result.data || [];
                 this.totalActivities = result.total || 0;
                 this.totalPages = result.last_page || 1;
+                this.anchorId = result.anchor_id ?? null;
 
                 // No success toast: the rows appearing is the confirmation.
             } catch (error) {
                 this.activities = [];
                 this.totalActivities = 0;
+                this.anchorId = null;
                 this.loadError = true;
 
                 if (window.notify) {
@@ -360,6 +376,14 @@ function activityDashboard() {
                 const params = new URLSearchParams();
                 params.append('page', nextPage);
                 params.append('per_page', this.perPage);
+
+                // Without this the timeline was the worst case of all: each Load
+                // More re-read an offset into a list that had grown since the
+                // previous one, so the rows it appended overlapped the rows
+                // already on screen.
+                if (this.anchorId !== null && this.anchorId !== undefined) {
+                    params.append('anchor_id', this.anchorId);
+                }
 
                 // Add filters to params
                 Object.keys(this.currentFilters || {}).forEach(key => {
