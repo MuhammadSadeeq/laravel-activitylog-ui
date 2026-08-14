@@ -7,13 +7,29 @@
                 <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                     <span x-text="totalActivities"></span> activities in chronological order
                 </p>
-                <!-- Helpful context about timeline behavior -->
-                <div x-show="activities.length > 0 && activities.length < totalActivities" class="mt-2">
+                <!-- Helpful context about timeline behavior. Dismissible: it says the
+                     same thing on every visit, and there was no way to get rid of it. -->
+                <div x-data="{
+                         dismissed: (() => { try { return localStorage.getItem('activitylog_timeline_hint_dismissed') === '1'; } catch (e) { return false; } })(),
+                         dismiss() {
+                             this.dismissed = true;
+                             try { localStorage.setItem('activitylog_timeline_hint_dismissed', '1'); } catch (e) {}
+                         }
+                     }"
+                     x-show="!dismissed && activities.length > 0 && activities.length < totalActivities"
+                     class="mt-2">
                     <div class="inline-flex items-center px-2 py-1 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-xs">
                         <svg class="w-3 h-3 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                         </svg>
                         Timeline shows activities from newest first - scroll down and click "Load More" for older activities
+                        <button type="button" @click="dismiss()"
+                                aria-label="Dismiss this tip"
+                                class="ml-2 -mr-0.5 rounded p-0.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 focus:outline-none focus:ring-1 focus:ring-amber-500">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
                     </div>
                 </div>
                     </div>
@@ -71,10 +87,10 @@
                                     </span>
 
                                 <!-- Enhanced user info with better styling -->
-                                <span x-show="activity.causer" class="text-xs text-gray-600 dark:text-gray-400 flex-shrink-0 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md">
-                                    by <span class="font-medium text-gray-700 dark:text-gray-300" x-text="activity.causer?.name || 'Unknown'"></span>
+                                <span x-show="activity.causer_type" class="text-xs text-gray-600 dark:text-gray-400 flex-shrink-0 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md">
+                                    by <span class="font-medium text-gray-700 dark:text-gray-300" x-text="activity.causer_name || 'Unknown'"></span>
                                 </span>
-                                <span x-show="!activity.causer" class="text-xs text-gray-600 dark:text-gray-400 flex-shrink-0 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md font-medium">
+                                <span x-show="!activity.causer_type" class="text-xs text-gray-600 dark:text-gray-400 flex-shrink-0 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded-md font-medium">
                                     by System
                                 </span>
                             </div>

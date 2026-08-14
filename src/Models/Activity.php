@@ -14,6 +14,14 @@ use Spatie\Activitylog\Models\Activity as SpatieActivity;
 
 class Activity extends SpatieActivity
 {
+    /**
+     * The UI renders the causer's display name, which needs the accessor's
+     * fallback logic rather than a raw `causer.name` off the relation.
+     *
+     * @var array<int, string>
+     */
+    protected $appends = ['causer_name'];
+
     protected static ?bool $hasAttributeChangesColumn = null;
 
     public static function hasAttributeChangesColumn(): bool
@@ -64,9 +72,18 @@ class Activity extends SpatieActivity
      */
     protected function withDefaultUnlessTypeMissing(MorphTo $relation, string $typeColumn): MorphTo
     {
-        return MorphTypes::missing($this->getAttributeFromArray($typeColumn))
-            ? $relation
-            : $relation->withDefault();
+        $type = $this->getAttributeFromArray($typeColumn);
+
+        // No recorded type means there is genuinely no related record, and a type
+        // whose class is gone cannot be instantiated. In both cases withDefault()
+        // fabricates an instance of THIS model as the causer/subject — which is
+        // wrong on its face, and recurses without end once causer_name is appended
+        // and serialised.
+        if ($type === null || $type === '' || MorphTypes::missing($type)) {
+            return $relation;
+        }
+
+        return $relation->withDefault();
     }
 
     /**
@@ -294,7 +311,26 @@ class Activity extends SpatieActivity
                 : 'System';
         }
 
-        return $this->causer->name ?? $this->causer->email ?? 'Unknown User';
+        // Which attributes to try is configurable: not every application keys its
+        // users on `name`, and hardcoding it made those causers show as "Unknown".
+        $attributes = config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']);
+
+        foreach ((array) $attributes as $attribute) {
+            try {
+                $value = $this->causer->{$attribute} ?? null;
+            } catch (\Throwable) {
+                // A host accessor or cast may throw; try the next candidate.
+                continue;
+            }
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return (string) $value;
+            }
+        }
+
+        return $this->causer_type
+            ? class_basename($this->causer_type) . " #{$this->causer_id}"
+            : 'Unknown User';
     }
 
     /**

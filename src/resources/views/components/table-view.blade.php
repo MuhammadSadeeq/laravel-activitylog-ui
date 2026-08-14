@@ -73,7 +73,7 @@
                                 <!-- Show subject and user info on mobile -->
                                 <div class="sm:hidden mt-1 text-xs text-gray-500 dark:text-gray-400">
                                     <span class="font-medium" x-text="activity.subject_type"></span><span class="text-gray-400 dark:text-gray-500">#</span><span x-text="activity.subject_id"></span>
-                                    <span x-show="activity.causer" class="text-gray-400 dark:text-gray-500"> • </span><span x-show="activity.causer" x-text="activity.causer?.name || 'Unknown'"></span>
+                                    <span x-show="activity.causer_type" class="text-gray-400 dark:text-gray-500"> • </span><span x-show="activity.causer_name" x-text="activity.causer_name"></span>
                                 </div>
                             </div>
                         </td>
@@ -88,19 +88,19 @@
 
                         <!-- User (hidden on small mobile) -->
                         <td class="hidden sm:table-cell px-3 sm:px-6 py-4 whitespace-nowrap">
-                            <div x-show="activity.causer" class="flex items-center">
+                            <div x-show="activity.causer_type" class="flex items-center">
                                 <div class="flex-shrink-0 h-6 sm:h-8 w-6 sm:w-8">
                                     <div class="h-6 sm:h-8 w-6 sm:w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 dark:from-blue-400 dark:to-purple-500 flex items-center justify-center shadow-sm">
                                         <span class="text-xs font-medium text-white"
-                                              x-text="activity.causer?.name?.charAt(0) || '?'"></span>
+                                              x-text="activity.causer_name?.charAt(0) || '?'"></span>
                                     </div>
                                 </div>
                                 <div class="ml-2 sm:ml-3">
-                                    <div class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="activity.causer?.name || 'Unknown'"></div>
+                                    <div class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="activity.causer_name || 'Unknown'"></div>
                                     <div class="hidden sm:block text-sm text-gray-500 dark:text-gray-400" x-text="activity.causer?.email || ''"></div>
                                 </div>
                             </div>
-                            <div x-show="!activity.causer" class="text-sm text-gray-500 dark:text-gray-400 flex items-center">
+                            <div x-show="!activity.causer_type" class="text-sm text-gray-500 dark:text-gray-400 flex items-center">
                                 <div class="flex-shrink-0 h-6 sm:h-8 w-6 sm:w-8 mr-2 sm:mr-3">
                                     <div class="h-6 sm:h-8 w-6 sm:w-8 rounded-full bg-gradient-to-br from-gray-500 to-gray-600 dark:from-gray-400 dark:to-gray-500 flex items-center justify-center shadow-sm">
                                         <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">

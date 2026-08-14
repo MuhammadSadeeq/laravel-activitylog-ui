@@ -98,17 +98,17 @@
                                     Context
                                 </h4>
                                 <dl class="space-y-3">
-                                    <div x-show="activity.causer">
+                                    <div x-show="activity.causer_type">
                                         <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Performed by</dt>
                                         <dd class="mt-1 flex items-center">
                                             <div class="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 dark:from-blue-400 dark:to-purple-500 rounded-full flex items-center justify-center mr-2">
-                                                <span class="text-xs font-semibold text-white" x-text="activity.causer?.name?.charAt(0) || '?'"></span>
+                                                <span class="text-xs font-semibold text-white" x-text="activity.causer_name?.charAt(0) || '?'"></span>
                                             </div>
-                                            <span class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="activity.causer?.name || 'Unknown'"></span>
+                                            <span class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="activity.causer_name || 'Unknown'"></span>
                                         </dd>
                                 </div>
 
-                                    <div x-show="!activity.causer">
+                                    <div x-show="!activity.causer_type">
                                         <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Performed by</dt>
                                         <dd class="mt-1 flex items-center">
                                             <div class="w-6 h-6 bg-gradient-to-br from-gray-500 to-gray-600 dark:from-gray-400 dark:to-gray-500 rounded-full flex items-center justify-center mr-2">

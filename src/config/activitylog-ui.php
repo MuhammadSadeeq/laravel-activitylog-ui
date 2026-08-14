@@ -83,6 +83,11 @@ return [
     |--------------------------------------------------------------------------
     */
     'ui' => [
+        // Attributes tried, in order, when showing who caused an activity.
+        // Applications that do not key their users on `name` would otherwise see
+        // every causer rendered as "Unknown".
+        'causer_name_attributes' => ['name', 'email'],
+
         'title' => 'Activity Log',
         'brand' => 'ActivityLog UI',
         'logo' => null,
