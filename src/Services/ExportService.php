@@ -21,6 +21,25 @@ class ExportService
         $this->activitylogService = $activitylogService;
     }
 
+
+    /**
+     * The disk exports are written to and read from.
+     *
+     * Everything here used to write through the default disk while only the
+     * download URL consulted this setting, so configuring exports.disk = s3 wrote
+     * the file locally and then handed out an S3 link to an object that was never
+     * created.
+     */
+    public function disk(): \Illuminate\Contracts\Filesystem\Filesystem
+    {
+        return Storage::disk($this->diskName());
+    }
+
+    public function diskName(): string
+    {
+        return (string) config('activitylog-ui.exports.disk', 'local');
+    }
+
     /**
      * Export activities to specified format.
      */
@@ -98,18 +117,21 @@ class ExportService
 
         $csvData = $this->prepareCsvData($activities, $options);
 
-        $handle = fopen(Storage::path($path), 'w');
+        // Written through a memory stream rather than fopen(Storage::path(...)):
+        // a path only exists for local disks, so the previous form could not write
+        // to S3 or any other remote disk at all.
+        $handle = fopen('php://temp', 'r+');
 
-        // Write header
         if (!empty($csvData)) {
             fputcsv($handle, array_keys($csvData[0]), ',', '"', '\\');
         }
 
-        // Write data
         foreach ($csvData as $row) {
             fputcsv($handle, $row, ',', '"', '\\');
         }
 
+        rewind($handle);
+        $this->disk()->put($path, stream_get_contents($handle));
         fclose($handle);
 
         return $path;
@@ -129,7 +151,7 @@ class ExportService
         $filename = $this->generateFilename('xlsx');
         $path = $this->getExportPath($filename);
 
-        Excel::store(new ActivitiesExport($activities, $options), $path);
+        Excel::store(new ActivitiesExport($activities, $options), $path, $this->diskName());
 
         return $path;
     }
@@ -152,6 +174,9 @@ class ExportService
             'activities' => $activities,
             'title' => $options['title'] ?? 'Activity Log Report',
             'generated_at' => now(),
+            // Both keys: the shipped view reads $filters, while filters_applied is
+            // what published views may already reference.
+            'filters' => $options['applied_filters'] ?? [],
             'filters_applied' => $options['applied_filters'] ?? [],
             'total_count' => $activities->count(),
             'export_options' => $options,
@@ -163,7 +188,7 @@ class ExportService
             $pdf->setPaper('a4', 'landscape');
         }
 
-        Storage::put($path, $pdf->output());
+        $this->disk()->put($path, $pdf->output());
 
         return $path;
     }
@@ -204,7 +229,7 @@ class ExportService
             }),
         ];
 
-        Storage::put($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $this->disk()->put($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
         return $path;
     }
@@ -268,13 +293,11 @@ class ExportService
      */
     public function getDownloadUrl(string $path): string
     {
-        $disk = config('activitylog-ui.exports.disk', 'local');
-
-        if ($disk === 'local') {
+        if ($this->diskName() === 'local') {
             return route('activitylog-ui.export.download', ['path' => base64_encode($path)]);
         }
 
-        return Storage::disk($disk)->url($path);
+        return $this->disk()->url($path);
     }
 
     /**
@@ -291,15 +314,15 @@ class ExportService
         $cutoff = now()->subHours($hours);
 
         $basePath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        $files = Storage::files($basePath);
+        $files = $this->disk()->files($basePath);
 
         $deletedCount = 0;
 
         foreach ($files as $file) {
-            $lastModified = Storage::lastModified($file);
+            $lastModified = $this->disk()->lastModified($file);
 
             if ($lastModified < $cutoff->timestamp) {
-                Storage::delete($file);
+                $this->disk()->delete($file);
                 $deletedCount++;
             }
         }

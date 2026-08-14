@@ -180,10 +180,23 @@ class ExportActivitiesJob implements ShouldQueue
             ]);
 
         } catch (\Throwable $e) {
+            // Deliberately best-effort: the export itself succeeded and the file
+            // is downloadable, so a mail failure must not fail the job and trigger
+            // a re-export. It is recorded in the status the UI polls, though —
+            // swallowing it entirely told the user their export was ready by an
+            // email that never arrived.
             Log::error('Failed to send export completion notification', [
                 'job_id' => $this->jobId,
                 'error' => $e->getMessage()
             ]);
+
+            $status = cache()->get("export_job_{$this->jobId}");
+
+            if (is_array($status)) {
+                $status['notification'] = 'failed';
+                $status['notification_error'] = 'The export is ready to download, but we could not email you about it.';
+                cache()->put("export_job_{$this->jobId}", $status, now()->addHours(24));
+            }
         }
     }
 }

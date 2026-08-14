@@ -5,7 +5,7 @@ namespace MuhammadSadeeq\ActivitylogUi\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Routing\Controller;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Storage;
@@ -123,7 +123,7 @@ class ExportController extends Controller
     /**
      * Download exported file.
      */
-    public function download(Request $request): BinaryFileResponse
+    public function download(Request $request): StreamedResponse
     {
         $this->authorize('viewActivityLogUi');
 
@@ -131,23 +131,36 @@ class ExportController extends Controller
             'path' => 'required|string',
         ]);
 
-        $path = base64_decode($request->input('path'));
+        $path = base64_decode($request->input('path'), true);
 
-        // Security check: ensure path is within exports directory
-        $exportPath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        if (!str_starts_with($path, $exportPath)) {
+        if ($path === false) {
+            abort(400, 'Invalid file path.');
+        }
+
+        // Confine the path to the exports directory. A prefix check alone accepts
+        // "exports/activity-logs/../../../.env": Flysystem rejects traversal in
+        // practice, but relying on that leaves the guard here saying something it
+        // does not enforce.
+        $exportPath = trim((string) config('activitylog-ui.exports.path', 'exports/activity-logs'), '/');
+        $normalized = ltrim(str_replace('\\', '/', $path), '/');
+
+        if (str_contains($normalized, '..') || !str_starts_with($normalized, $exportPath . '/')) {
             abort(403, 'Invalid file path.');
         }
 
-        if (!Storage::exists($path)) {
+        // Read from the configured disk, not whichever one happens to be default:
+        // the file was written to the configured one.
+        $disk = $this->exportService->disk();
+
+        if (!$disk->exists($normalized)) {
             abort(404, 'File not found.');
         }
 
-        $filename = basename($path);
-        $mimeType = $this->getMimeType($path);
+        $filename = basename($normalized);
+        $mimeType = $this->getMimeType($normalized);
 
-        return response()->download(
-            Storage::path($path),
+        return response()->streamDownload(
+            fn () => print($disk->get($normalized)),
             $filename,
             ['Content-Type' => $mimeType]
         );
