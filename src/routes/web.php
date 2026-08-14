@@ -31,6 +31,15 @@ if (config('activitylog-ui.authorization.enabled', true)) {
     // The middleware enforces these lists even with authorization disabled, but
     // it was only ever registered when authorization was enabled — so anyone who
     // set them while leaving authorization off got no protection at all.
+    //
+    // 'auth' comes too: an allow-list requires a logged-in user either way, and
+    // without it a guest got a bare 401 with no route to signing in — so the
+    // frontend's session-expiry reload landed on an error page rather than a
+    // login form.
+    if (!in_array('auth', $middleware, true)) {
+        $middleware[] = 'auth';
+    }
+
     if (!in_array($accessMiddleware, $middleware, true)) {
         $middleware[] = $accessMiddleware;
     }

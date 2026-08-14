@@ -96,10 +96,23 @@ class Activity extends SpatieActivity
             }
 
             $instance = new $class;
+            $connection = $instance->getConnectionName();
+
+            // A connection the application does not define would otherwise
+            // resolve fine here and then throw on the first query, which reads as
+            // a package fault rather than the configuration mistake it is.
+            if ($connection !== null && config("database.connections.{$connection}") === null) {
+                static::reportUnusableActivityModel(
+                    $class,
+                    "it declares connection [{$connection}], which is not defined in database.connections"
+                );
+
+                return null;
+            }
 
             return [
                 'table' => $instance->getTable(),
-                'connection' => $instance->getConnectionName(),
+                'connection' => $connection,
             ];
         } catch (\Throwable $e) {
             static::reportUnusableActivityModel($class, $e->getMessage());
