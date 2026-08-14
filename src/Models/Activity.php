@@ -3,9 +3,12 @@
 namespace MuhammadSadeeq\ActivitylogUi\Models;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
+use MuhammadSadeeq\ActivitylogUi\Eloquent\MorphTypes;
+use MuhammadSadeeq\ActivitylogUi\Eloquent\SafeMorphTo;
 use Spatie\Activitylog\Models\Activity as SpatieActivity;
 
 class Activity extends SpatieActivity
@@ -29,7 +32,9 @@ class Activity extends SpatieActivity
      */
     public function causer(): MorphTo
     {
-        return $this->morphTo()->withoutGlobalScopes()->withDefault();
+        $relation = $this->morphTo()->withoutGlobalScopes();
+
+        return $this->withDefaultUnlessTypeMissing($relation, 'causer_type');
     }
 
     /**
@@ -37,7 +42,55 @@ class Activity extends SpatieActivity
      */
     public function subject(): MorphTo
     {
-        return $this->morphTo()->withDefault();
+        return $this->withDefaultUnlessTypeMissing($this->morphTo(), 'subject_type');
+    }
+
+    /**
+     * Apply withDefault() only when the recorded type still resolves.
+     *
+     * For a type whose class is gone, a default instance would be an empty
+     * Activity standing in for the missing record — worse than null, because it
+     * serialises into the API response as though a subject were loaded.
+     */
+    protected function withDefaultUnlessTypeMissing(MorphTo $relation, string $typeColumn): MorphTo
+    {
+        return MorphTypes::missing($this->getAttributeFromArray($typeColumn))
+            ? $relation
+            : $relation->withDefault();
+    }
+
+    /**
+     * Use a MorphTo that tolerates recorded types whose class is gone.
+     *
+     * Covers the eager-loading path.
+     */
+    protected function newMorphTo(Builder $query, Model $parent, $foreignKey, $ownerKey, $type, $relation)
+    {
+        return new SafeMorphTo($query, $parent, $foreignKey, $ownerKey, $type, $relation);
+    }
+
+    /**
+     * Covers the lazy path, where Eloquent instantiates the target class before
+     * the relation object even exists.
+     *
+     * Rather than instantiating a class that is no longer there, relate to
+     * nothing: the query cannot match and the default model is switched off, so
+     * the relation reads as null instead of throwing.
+     */
+    protected function morphInstanceTo($target, $name, $type, $id, $ownerKey)
+    {
+        if (MorphTypes::missing($target)) {
+            return $this->newMorphTo(
+                $this->newQuery()->whereRaw('1 = 0'),
+                $this,
+                $id,
+                $ownerKey ?? $this->getKeyName(),
+                $type,
+                $name
+            )->withDefault(false);
+        }
+
+        return parent::morphInstanceTo($target, $name, $type, $id, $ownerKey);
     }
 
     /**
@@ -221,7 +274,11 @@ class Activity extends SpatieActivity
     public function getCauserNameAttribute(): string
     {
         if (!$this->causer) {
-            return 'System';
+            // A recorded type whose class is gone reads as no causer at all, so
+            // name it from the log rather than calling it a system action.
+            return $this->causer_type
+                ? class_basename($this->causer_type) . " #{$this->causer_id}"
+                : 'System';
         }
 
         return $this->causer->name ?? $this->causer->email ?? 'Unknown User';
@@ -233,7 +290,11 @@ class Activity extends SpatieActivity
     public function getSubjectNameAttribute(): string
     {
         if (!$this->subject) {
-            return 'Unknown';
+            // Same here: the row still records which type and id it referred to,
+            // which is more use than "Unknown".
+            return $this->subject_type
+                ? class_basename($this->subject_type) . " #{$this->subject_id}"
+                : 'Unknown';
         }
 
         return $this->subject->name ??
