@@ -69,11 +69,48 @@ public function up(): void
 
 Once you have verified the migration is complete and your application works correctly, you can optionally clean up the legacy keys from `properties` in a separate migration.
 
+## Step 1b: Update your own models
+
+Spatie v5 moved the traits your models use. Every model still importing the old
+path will fatal with `Trait "Spatie\Activitylog\Traits\LogsActivity" not found`
+as soon as the upgrade lands, so do this in the same deploy.
+
+| v4 | v5 |
+|---|---|
+| `Spatie\Activitylog\Traits\LogsActivity` | `Spatie\Activitylog\Models\Concerns\LogsActivity` |
+| `Spatie\Activitylog\Traits\CausesActivity` | `Spatie\Activitylog\Models\Concerns\CausesActivity` |
+| `Spatie\Activitylog\Traits\HasActivity` | `Spatie\Activitylog\Models\Concerns\HasActivity` |
+
+```bash
+# Rewrite the imports across your app
+grep -rl 'Spatie\\Activitylog\\Traits' app/ \
+  | xargs sed -i '' 's|Spatie\\Activitylog\\Traits\\|Spatie\\Activitylog\\Models\\Concerns\\|g'
+```
+
+The relations were renamed too: `$model->activities` is now
+`$model->activitiesAsSubject`, and `$model->actions` is now
+`$model->activitiesAsCauser`. `getActivitylogOptions()` is optional in v5. See
+Spatie's own upgrade guide for the complete rename table.
+
 ## Step 2: Update this package
 
 ```bash
 composer require muhammadsadeeq/laravel-activitylog-ui:"^2.0"
 ```
+
+### Authorization now defaults to on
+
+If you never published `config/activitylog-ui.php`, the UI previously required no
+authentication at all. It now requires a logged-in user who passes the
+`viewActivityLogUi` gate, which by default allows any authenticated user.
+
+* Published configs keep whatever value they already contain and are unaffected.
+* To keep the old behaviour, set `ACTIVITYLOG_UI_AUTHORIZATION=false`.
+* With authorization on, a guest hitting the UI in a browser is redirected by
+  Laravel's `auth` middleware, so your app needs a named `login` route (or a
+  `redirectGuestsTo()` callback). JSON requests get a `401` instead.
+* `access.allowed_users` / `access.allowed_roles` are now enforced even when
+  authorization is disabled. They previously had no effect in that combination.
 
 ## Step 3: Republish views (if published)
 
