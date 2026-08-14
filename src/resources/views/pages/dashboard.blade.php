@@ -286,7 +286,12 @@ function activityDashboard() {
                 this.loadError = true;
 
                 if (window.notify) {
-                    window.notify.error('Error', 'Failed to load activities');
+                    // A refused filter names itself, and the user can act on that
+                    // — usually by clearing filters. "Failed to load activities"
+                    // gives them nothing to go on.
+                    error?.isInvalidInput
+                        ? window.notify.error('Filter not accepted', error.message, { timeout: 0 })
+                        : window.notify.error('Error', 'Failed to load activities');
                 }
             } finally {
                 this.loading = false;

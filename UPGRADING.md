@@ -164,3 +164,47 @@ The batch UUID filter and display have been removed. If you used batch grouping,
 ```php
 activity()->withProperty('group', $groupId)->log('...');
 ```
+
+### Out-of-range and unusable parameters are now refused
+
+The API used to quietly answer a different question than the one it was asked.
+`per_page=999999` became 100, `per_page=-5` became 1, a `causer_id` it could not
+use became no causer filter at all, and the 101st `event_types` entry was
+dropped. Every one of those returned 200 with no indication that anything had
+changed.
+
+For a page whose purpose is to report what happened, the filter cases are the
+serious ones: dropping a filter shows **more** of the audit log than was asked
+for, and looks like a complete answer.
+
+These now return **422** with a message naming the parameter:
+
+```json
+{
+  "message": "The per_page parameter must be between 1 and 100. You asked for 999999.",
+  "errors": { "per_page": ["The per_page parameter must be between 1 and 100. You asked for 999999."] }
+}
+```
+
+Affected: `page`, `per_page`, `anchor_id`, `causer_id`, `subject_id`,
+`event_types`, and the single-value filters (`search`, `date_preset`,
+`start_date`, `end_date`, `causer_type`, `subject_type`, `property_key`). The
+export endpoint applies the same rules to the filters in its JSON body.
+
+Omitting a parameter, or sending it empty, still uses the default — only a value
+that cannot be honoured is refused. The package's own configured defaults are
+still clamped rather than refused, since a `default_per_page` above the cap is
+the installation's mistake, not the caller's.
+
+**What to check before upgrading:**
+
+- Bookmarks, scripts or saved views carrying a `per_page` above your largest
+  `ui.per_page_options` value. They will now fail instead of silently returning
+  fewer rows.
+- Any integration passing identifiers that are not integers, UUIDs, ULIDs, or
+  `[A-Za-z0-9_-]{1,64}`.
+- Requests filtering on more than 100 event types at once.
+
+The dashboard itself surfaces the message in a notification that stays until
+dismissed, so a stale filter in a user's browser storage says what is wrong
+rather than failing silently.

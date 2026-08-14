@@ -796,6 +796,24 @@
                     throw new Error(`${context} failed: your session has expired.`);
                 }
 
+                // A refused parameter carries an explanation worth repeating.
+                // Reporting it as a generic failure left the user with a filter
+                // the server would not accept and nothing saying which one.
+                if (response.status === 422) {
+                    let detail = '';
+
+                    try {
+                        const parsed = JSON.parse(body);
+                        detail = Object.values(parsed.errors || {}).flat().join(' ') || parsed.message || '';
+                    } catch (error) {
+                        detail = preview;
+                    }
+
+                    const rejection = new Error(detail || `${context} was refused.`);
+                    rejection.isInvalidInput = true;
+                    throw rejection;
+                }
+
                 if (!response.ok) {
                     throw new Error(`${context} failed with HTTP ${response.status}${preview ? `: ${preview}` : ''}`);
                 }

@@ -5,8 +5,10 @@ namespace MuhammadSadeeq\ActivitylogUi\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Illuminate\Routing\Controller;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use MuhammadSadeeq\ActivitylogUi\Services\ActivitylogService;
 use MuhammadSadeeq\ActivitylogUi\Services\AnalyticsService;
 
@@ -33,6 +35,11 @@ class ActivityLogController extends Controller
         $filters = $this->getFiltersFromRequest($request);
         $view = $this->stringInput($request, 'view', (string) config('activitylog-ui.ui.default_view', 'table'));
         $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, $this->maxPerPage());
+
+        // Validated but not consumed: the paginator resolves 'page' itself, and it
+        // silently answers 0, -1 and 'abc' with page 1. A caller who asked for a
+        // specific page should be told the request was not one that could be met.
+        $this->intInput($request, 'page', 1, 1, 1000000);
 
         $data = ['filters' => $filters, 'view' => $view, 'perPage' => $perPage];
 
@@ -93,6 +100,11 @@ class ActivityLogController extends Controller
         $filters = $this->getFiltersFromRequest($request);
         $view = $this->stringInput($request, 'view', (string) config('activitylog-ui.ui.default_view', 'table'));
         $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, $this->maxPerPage());
+
+        // Validated but not consumed: the paginator resolves 'page' itself, and it
+        // silently answers 0, -1 and 'abc' with page 1. A caller who asked for a
+        // specific page should be told the request was not one that could be met.
+        $this->intInput($request, 'page', 1, 1, 1000000);
 
         if ($view === 'timeline') {
             $data = $this->activitylogService->getTimelineActivities($filters, $perPage);
@@ -249,6 +261,11 @@ class ActivityLogController extends Controller
                 'success' => true,
                 'data' => $data,
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Analytics error: ' . $e->getMessage(), [
                 'exception' => $e,
@@ -327,10 +344,23 @@ class ActivityLogController extends Controller
             $filters = $this->getFiltersFromRequest($request);
             $perPage = $this->intInput($request, 'per_page', 25, 1, $this->maxPerPage());
 
+        // Validated but not consumed: the paginator resolves 'page' itself, and it
+        // silently answers 0, -1 and 'abc' with page 1. A caller who asked for a
+        // specific page should be told the request was not one that could be met.
+        $this->intInput($request, 'page', 1, 1, 1000000);
+
             // Pins later pages to the rows that existed when the first one was
             // read, so activities recorded in between do not push the list down
             // and make the next page repeat what the user has already seen.
-            $anchorId = $this->sanitizeId($request->input('anchor_id'));
+            $anchorId = null;
+
+            if ($request->exists('anchor_id') && $request->input('anchor_id') !== null && $request->input('anchor_id') !== '') {
+                $anchorId = $this->sanitizeId($request->input('anchor_id'));
+
+                if ($anchorId === null) {
+                    $this->rejectInput('anchor_id', 'The anchor_id parameter is not a usable identifier.');
+                }
+            }
 
             $activities = $this->activitylogService->getActivities($filters, $perPage, $anchorId);
 
@@ -350,6 +380,11 @@ class ActivityLogController extends Controller
                 // everything above.
                 'anchor_id' => $anchorId ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null),
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             // Log the error for debugging
             Log::error('ActivityLog API Error: ' . $e->getMessage(), [
@@ -386,6 +421,11 @@ class ActivityLogController extends Controller
                 'data' => $activity,
                 'related' => $this->getRelatedActivitiesForActivity($activity)
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Failed to load activity detail', [
                 'activity_id' => $id,
@@ -419,6 +459,11 @@ class ActivityLogController extends Controller
             return response()->json([
                 'data' => $related
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Failed to load related activities', [
                 'activity_id' => $activityId,
@@ -451,6 +496,11 @@ class ActivityLogController extends Controller
             return response()->json([
                 'data' => $suggestions
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Failed to fetch search suggestions', [
                 'error' => $e->getMessage(),
@@ -478,6 +528,11 @@ class ActivityLogController extends Controller
                 'subject_types' => $subjectTypes,
                 'event_types' => $eventTypes,
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Failed to get filter options', [
                 'error' => $e->getMessage(),
@@ -505,6 +560,11 @@ class ActivityLogController extends Controller
                 'success' => true,
                 'data' => $eventTypes,
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Failed to load event types styling', [
                 'error' => $e->getMessage(),
@@ -539,6 +599,11 @@ class ActivityLogController extends Controller
             return response()->json([
                 'data' => $views
             ]);
+        } catch (ValidationException | HttpExceptionInterface $e) {
+            // A refused input is the answer, not a failure to produce one.
+            // Swallowed here it became a 500 that blamed the server for a
+            // parameter the caller sent.
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Failed to fetch saved views', [
                 'error' => $e->getMessage(),
@@ -592,15 +657,26 @@ class ActivityLogController extends Controller
      */
     protected function intInput(Request $request, string $key, int $default, int $min, int $max): int
     {
-        $value = $request->input($key, $default);
-
-        // The default is clamped too: a configured default_per_page above the cap
-        // otherwise slipped through whenever the request value was malformed.
-        if (is_array($value) || !is_numeric($value)) {
+        if (!$request->exists($key) || $request->input($key) === null || $request->input($key) === '') {
+            // The configured default is still clamped. It is the package's own
+            // value, not the caller's, so refusing the request over it would
+            // report someone else's mistake as theirs.
             return (int) max($min, min($max, $default));
         }
 
-        return (int) max($min, min($max, (int) $value));
+        $value = $request->input($key);
+
+        if (is_array($value) || !is_numeric($value) || (string) (int) $value !== trim((string) $value)) {
+            $this->rejectInput($key, "The {$key} parameter must be a whole number between {$min} and {$max}.");
+        }
+
+        $value = (int) $value;
+
+        if ($value < $min || $value > $max) {
+            $this->rejectInput($key, "The {$key} parameter must be between {$min} and {$max}. You asked for {$value}.");
+        }
+
+        return $value;
     }
 
     /**
@@ -608,9 +684,45 @@ class ActivityLogController extends Controller
      */
     protected function stringInput(Request $request, string $key, string $default = ''): string
     {
-        $value = $request->input($key, $default);
+        if (!$request->exists($key)) {
+            return $default;
+        }
 
-        return is_scalar($value) ? (string) $value : $default;
+        $value = $request->input($key);
+
+        if ($value === null) {
+            return $default;
+        }
+
+        if (!is_scalar($value)) {
+            $this->rejectInput($key, "The {$key} parameter must be a single value.");
+        }
+
+        return (string) $value;
+    }
+
+    /**
+     * Refuse a request rather than quietly answering a different one.
+     *
+     * Everything here used to be clamped or dropped: per_page=999999 silently
+     * became 100, a malformed causer id became no causer filter at all, and the
+     * response said nothing about either. For a page whose whole purpose is to
+     * report what happened, quietly widening a filter is the worst of the
+     * options — it shows more of the audit log than was asked for and looks like
+     * a complete answer.
+     *
+     * JSON callers get the framework's standard validation payload. Anything
+     * else gets a 422 page: a ValidationException would redirect back for an
+     * HTML request, and since the offending value is in the URL of the page
+     * being requested, that redirects into itself.
+     */
+    protected function rejectInput(string $key, string $message): never
+    {
+        if (request()->expectsJson()) {
+            throw ValidationException::withMessages([$key => $message]);
+        }
+
+        abort(422, $message);
     }
 
     /**
@@ -628,9 +740,12 @@ class ActivityLogController extends Controller
             'start_date' => $request->input('start_date'),
             'end_date' => $request->input('end_date'),
             'causer_type' => $request->input('causer_type'),
-            'causer_id' => $this->sanitizeId($request->input('causer_id')),
+            // Passed through raw: normalizeFilters is the single place that
+            // decides what an id may be, and sanitising here first turned an
+            // unusable one into null before it could be refused.
+            'causer_id' => $request->input('causer_id'),
             'subject_type' => $request->input('subject_type'),
-            'subject_id' => $this->sanitizeId($request->input('subject_id')),
+            'subject_id' => $request->input('subject_id'),
             'event_types' => $this->getArrayFromRequest($request, 'event_types'),
             'property_key' => $request->input('property_key'),
         ]);
@@ -650,33 +765,58 @@ class ActivityLogController extends Controller
         $strings = ['search', 'date_preset', 'start_date', 'end_date', 'causer_type', 'subject_type', 'property_key'];
 
         foreach ($strings as $key) {
-            if (!array_key_exists($key, $filters)) {
+            if (!array_key_exists($key, $filters) || $filters[$key] === null) {
                 continue;
             }
 
             $value = $filters[$key];
-            $filters[$key] = is_scalar($value) ? (string) $value : null;
+
+            // A scope typed ?string would raise a TypeError on an array, so this
+            // shape was being replaced with null — which reads as "no filter" and
+            // answers with the unfiltered log.
+            if (!is_scalar($value)) {
+                $this->rejectInput($key, "The {$key} filter must be a single value.");
+            }
+
+            $filters[$key] = (string) $value;
         }
 
-        if (array_key_exists('event_types', $filters)) {
+        if (array_key_exists('event_types', $filters) && $filters['event_types'] !== null) {
             $types = is_array($filters['event_types']) ? $filters['event_types'] : [$filters['event_types']];
+            $types = array_values(array_filter($types, fn ($type) => $type !== null && $type !== ''));
 
-            // Flat list of non-empty strings: a nested array reaches whereIn() and
-            // becomes an unbindable parameter.
-            $filters['event_types'] = array_slice(array_values(array_filter(
-                array_map(fn ($type) => is_scalar($type) ? (string) $type : null, $types),
-                fn ($type) => $type !== null && $type !== '' && mb_strlen($type) <= 191
-            )),
-                // Bounded: these become whereIn bindings, and a few thousand of
-                // them exceed what SQLite and others accept, failing the request
-                // before the export controller's own error handling.
-                0, 100);
+            foreach ($types as $type) {
+                // A nested array reaches whereIn() and becomes an unbindable
+                // parameter; an over-long one cannot match a stored event.
+                if (!is_scalar($type) || mb_strlen((string) $type) > 191) {
+                    $this->rejectInput('event_types', 'Each event type must be a single value of at most 191 characters.');
+                }
+            }
+
+            // These become whereIn bindings, and a few thousand of them exceed
+            // what SQLite and others accept. Truncating to the first hundred
+            // silently broadened the filter instead.
+            if (count($types) > 100) {
+                $this->rejectInput('event_types', 'At most 100 event types can be filtered on at once. You sent ' . count($types) . '.');
+            }
+
+            $filters['event_types'] = array_map(fn ($type) => (string) $type, $types);
         }
 
         foreach (['causer_id', 'subject_id'] as $key) {
-            if (array_key_exists($key, $filters)) {
-                $filters[$key] = $this->sanitizeId($filters[$key]);
+            if (!array_key_exists($key, $filters) || $filters[$key] === null || $filters[$key] === '') {
+                continue;
             }
+
+            $id = $this->sanitizeId($filters[$key]);
+
+            // Dropping an unusable id was the worst case of all: the caller asked
+            // for one causer's activity and got everyone's, with nothing saying so.
+            if ($id === null) {
+                $this->rejectInput($key, "The {$key} filter is not a usable identifier.");
+            }
+
+            $filters[$key] = $id;
         }
 
         return $filters;
