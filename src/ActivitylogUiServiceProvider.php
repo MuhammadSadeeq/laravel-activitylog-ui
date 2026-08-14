@@ -103,10 +103,9 @@ class ActivitylogUiServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         if ($this->app->runningInConsole()) {
-            // Register commands here if any
-            // $this->commands([
-            //     \MuhammadSadeeq\ActivitylogUi\Console\Commands\InstallCommand::class,
-            // ]);
+            $this->commands([
+                \MuhammadSadeeq\ActivitylogUi\Console\ClearCacheCommand::class,
+            ]);
         }
     }
 
