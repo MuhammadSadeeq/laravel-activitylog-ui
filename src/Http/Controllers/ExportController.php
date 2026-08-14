@@ -159,11 +159,9 @@ class ExportController extends Controller
         $filename = basename($normalized);
         $mimeType = $this->getMimeType($normalized);
 
-        return response()->streamDownload(
-            fn () => print($disk->get($normalized)),
-            $filename,
-            ['Content-Type' => $mimeType]
-        );
+        // download() streams via readStream() and supplies the file size, rather
+        // than reading the whole export into memory to print it.
+        return $disk->download($normalized, $filename, ['Content-Type' => $mimeType]);
     }
 
     /**

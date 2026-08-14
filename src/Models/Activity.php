@@ -81,59 +81,45 @@ class Activity extends SpatieActivity
 
         try {
             if (!class_exists($class)) {
-                static::reportUnusableActivityModel($class, 'the class does not exist');
-
-                return null;
+                throw new \RuntimeException(
+                    "activitylog.activity_model is set to [{$class}], which does not exist. "
+                    . 'Fix the configured model rather than letting the UI read a different activity log.'
+                );
             }
 
             // Spatie requires both, and so must this: accepting any Eloquent model
             // would let a misconfiguration point the UI at, say, the users table
             // and serialise password hashes into the activity list.
             if (!is_a($class, Model::class, true) || !is_a($class, ActivityContract::class, true)) {
-                static::reportUnusableActivityModel($class, 'it is not an Eloquent model implementing Spatie\'s Activity contract');
-
-                return null;
+                throw new \RuntimeException(
+                    "activitylog.activity_model is set to [{$class}], which is not an Eloquent model implementing "
+                    . ActivityContract::class . '. Pointing the UI at an arbitrary model would read that table and '
+                    . 'serialise its rows as activities.'
+                );
             }
 
             $instance = new $class;
-            $connection = $instance->getConnectionName();
-
-            // A connection the application does not define would otherwise
-            // resolve fine here and then throw on the first query, which reads as
-            // a package fault rather than the configuration mistake it is.
-            if ($connection !== null && config("database.connections.{$connection}") === null) {
-                static::reportUnusableActivityModel(
-                    $class,
-                    "it declares connection [{$connection}], which is not defined in database.connections"
-                );
-
-                return null;
-            }
 
             return [
                 'table' => $instance->getTable(),
-                'connection' => $connection,
+                'connection' => $instance->getConnectionName(),
             ];
         } catch (\Throwable $e) {
-            static::reportUnusableActivityModel($class, $e->getMessage());
-
-            return null;
+            // Fail closed. Falling back to the default table here would quietly
+            // show whichever log the default connection holds — in a multi-tenant
+            // application, another tenant's audit trail. A configured model that
+            // cannot be resolved is a configuration fault, and reading the wrong
+            // records is a worse answer than refusing to read any.
+            throw new \RuntimeException(
+                "activitylog.activity_model is set to [{$class}], which could not be resolved: {$e->getMessage()}. "
+                . 'Fix the configured model rather than letting the UI read a different activity log.',
+                previous: $e
+            );
         } finally {
             static::$resolvingActivitySource = false;
         }
     }
 
-    /**
-     * Say plainly that a configured model was ignored; silently reading the
-     * default table would hide the misconfiguration entirely.
-     */
-    protected static function reportUnusableActivityModel(string $class, string $reason): void
-    {
-        Log::warning('Activity log UI is ignoring activitylog.activity_model and using the default table.', [
-            'activity_model' => $class,
-            'reason' => $reason,
-        ]);
-    }
 
     /**
      * A stable fingerprint of where activities are being read from.
@@ -337,12 +323,75 @@ class Activity extends SpatieActivity
                 $q->orWhere('attribute_changes', 'like', "%{$search}%");
             }
 
-            $q->orWhereHas('causer', function (Builder $causerQuery) use ($search) {
-                  $causerQuery->where('name', 'like', "%{$search}%")
-                             ->orWhere('email', 'like', "%{$search}%");
-              });
+            // Restricted to types that still resolve. A wildcard whereHas makes
+            // Eloquent enumerate every distinct causer_type and instantiate each
+            // one, so a single deleted class threw — and since analytics now
+            // shares this filtering, that took the whole dashboard with it.
+            $types = static::searchableCauserTypes();
+
+            if ($types !== []) {
+                $q->orWhereHasMorph('causer', $types, function (Builder $causerQuery, string $type) use ($search) {
+                    $columns = static::searchableCauserColumns($causerQuery->getModel());
+
+                    if ($columns === []) {
+                        // Nothing to match on; make this type contribute nothing
+                        // rather than referencing a column it does not have.
+                        $causerQuery->whereRaw('1 = 0');
+
+                        return;
+                    }
+
+                    $causerQuery->where(function (Builder $inner) use ($columns, $search) {
+                        foreach ($columns as $column) {
+                            $inner->orWhere($column, 'like', "%{$search}%");
+                        }
+                    });
+                });
+            }
         });
     }
+
+    /**
+     * Distinct causer types recorded in the log whose class still resolves.
+     *
+     * @return array<int, string>
+     */
+    protected static function searchableCauserTypes(): array
+    {
+        return static::query()
+            ->newQuery()
+            ->distinct()
+            ->whereNotNull('causer_type')
+            ->pluck('causer_type')
+            ->filter(fn ($type) => !MorphTypes::missing($type))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Which of the configured display attributes are real columns on a causer.
+     *
+     * The previous form assumed every causer table had both `name` and `email`;
+     * a model keyed on something else produced an unknown-column error.
+     *
+     * @return array<int, string>
+     */
+    protected static function searchableCauserColumns(Model $causer): array
+    {
+        $candidates = (array) config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']);
+        $key = ($causer->getConnectionName() ?? 'default') . '.' . $causer->getTable();
+
+        static::$searchableColumns[$key] ??= array_values(array_filter(
+            $candidates,
+            fn ($column) => is_string($column) && Schema::connection($causer->getConnectionName())
+                ->hasColumn($causer->getTable(), $column)
+        ));
+
+        return static::$searchableColumns[$key];
+    }
+
+    /** @var array<string, array<int, string>> */
+    protected static array $searchableColumns = [];
 
     /**
      * Scope for filtering by event types.

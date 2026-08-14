@@ -74,8 +74,12 @@ class AnalyticsService
      * These payloads used to contain Collections, Eloquent models and Carbon
      * instances. Without a version bump an entry written before that changed
      * would still be read back and served, since it is an array either way.
+     *
+     * v3: analytics now filters exactly as the activity list does. The filter
+     * array — and so its hash — is unchanged, but the numbers it produces are
+     * not, so a v2 entry answers the same key with the old, narrower result.
      */
-    protected const ANALYTICS_CACHE_VERSION = 'v2';
+    protected const ANALYTICS_CACHE_VERSION = 'v3';
 
     /**
      * Read a cached analytics array, or null when there is nothing usable.

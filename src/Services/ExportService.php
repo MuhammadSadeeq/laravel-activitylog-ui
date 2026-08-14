@@ -40,6 +40,37 @@ class ExportService
         return (string) config('activitylog-ui.exports.disk', 'local');
     }
 
+
+    /**
+     * Fail loudly when a write did not happen.
+     *
+     * Laravel's filesystem returns false rather than throwing when exceptions are
+     * disabled, so an unwritable disk otherwise produced a "completed" export and
+     * an email announcing a file that was never created.
+     */
+    protected function assertWritten(bool $written, string $path): void
+    {
+        if (! $written) {
+            throw new \RuntimeException("Failed to write the export to [{$path}] on disk [{$this->diskName()}].");
+        }
+    }
+
+    /**
+     * Neutralise spreadsheet formulas in an exported cell.
+     *
+     * A logged description or causer name beginning with =, +, - or @ is executed
+     * as a formula when the file is opened, which turns an audit export into a
+     * delivery mechanism for whatever an attacker managed to get logged.
+     */
+    public static function neutraliseFormula(mixed $value): mixed
+    {
+        if (!is_string($value) || $value === '') {
+            return $value;
+        }
+
+        return in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true) ? "'" . $value : $value;
+    }
+
     /**
      * Export activities to specified format.
      */
@@ -131,8 +162,15 @@ class ExportService
         }
 
         rewind($handle);
-        $this->disk()->put($path, stream_get_contents($handle));
-        fclose($handle);
+
+        try {
+            // The resource is handed to put() directly: stream_get_contents()
+            // would allocate the whole export as a single string, defeating the
+            // point of writing through a stream at all.
+            $this->assertWritten($this->disk()->put($path, $handle), $path);
+        } finally {
+            fclose($handle);
+        }
 
         return $path;
     }
@@ -151,7 +189,7 @@ class ExportService
         $filename = $this->generateFilename('xlsx');
         $path = $this->getExportPath($filename);
 
-        Excel::store(new ActivitiesExport($activities, $options), $path, $this->diskName());
+        $this->assertWritten(Excel::store(new ActivitiesExport($activities, $options), $path, $this->diskName()), $path);
 
         return $path;
     }
@@ -188,7 +226,7 @@ class ExportService
             $pdf->setPaper('a4', 'landscape');
         }
 
-        $this->disk()->put($path, $pdf->output());
+        $this->assertWritten($this->disk()->put($path, $pdf->output()), $path);
 
         return $path;
     }
@@ -229,7 +267,7 @@ class ExportService
             }),
         ];
 
-        $this->disk()->put($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $this->assertWritten($this->disk()->put($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)), $path);
 
         return $path;
     }
@@ -264,7 +302,9 @@ class ExportService
                 };
             }
 
-            return $row;
+            // Applied at the row level so every column is covered, including any
+            // custom ones supplied through options['columns'].
+            return array_map([static::class, 'neutraliseFormula'], $row);
         })->toArray();
     }
 
@@ -293,11 +333,11 @@ class ExportService
      */
     public function getDownloadUrl(string $path): string
     {
-        if ($this->diskName() === 'local') {
-            return route('activitylog-ui.export.download', ['path' => base64_encode($path)]);
-        }
-
-        return $this->disk()->url($path);
+        // Always through the authorised endpoint. Returning $disk->url() handed
+        // out a direct link to the object — public or unsigned depending on the
+        // disk — so an audit export left the package's authorization behind
+        // entirely, and on a private disk the link simply did not work.
+        return route('activitylog-ui.export.download', ['path' => base64_encode($path)]);
     }
 
     /**
