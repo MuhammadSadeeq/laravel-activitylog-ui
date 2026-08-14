@@ -9,15 +9,20 @@ use Illuminate\Database\Eloquent\Model;
  */
 class MorphTypes
 {
-    /** @var array<string, bool> */
-    protected static array $resolved = [];
+    /**
+     * Memoised class_exists() results, keyed by the RESOLVED class name.
+     *
+     * Keying on the resolved class rather than the recorded type means a morph
+     * map registered or changed later produces a different key, so a stale
+     * decision cannot be served to a long-lived worker. class_exists() re-runs
+     * the autoloader on every miss, which is why the result is kept at all.
+     *
+     * @var array<string, bool>
+     */
+    protected static array $classExists = [];
 
     /**
      * Whether a recorded morph type cannot be turned into a model class.
-     *
-     * Honours the morph map, so an aliased type that is still mapped resolves
-     * normally. Results are memoised because this is consulted once per distinct
-     * type per eager load.
      */
     public static function missing(?string $type): bool
     {
@@ -30,30 +35,31 @@ class MorphTypes
 
     /**
      * Whether a recorded morph type resolves to a loadable model class.
+     *
+     * An autoloader failure is deliberately NOT caught. A class that exists but
+     * cannot be loaded — a parse error, a missing dependency — is a deployment
+     * problem, and silently reporting it as "missing" would quietly blank the
+     * audit trail for every row of that type.
      */
     public static function resolves(string $type): bool
     {
-        if (isset(static::$resolved[$type])) {
-            return static::$resolved[$type];
+        $class = Model::getActualClassNameForMorph($type);
+
+        if (!is_string($class) || $class === '') {
+            return false;
         }
 
-        try {
-            $class = Model::getActualClassNameForMorph($type);
-            // class_exists() runs the autoloader, which can itself fail when the
-            // class file references something else that is gone.
-            $resolves = class_exists($class);
-        } catch (\Throwable) {
-            $resolves = false;
-        }
-
-        return static::$resolved[$type] = $resolves;
+        return static::$classExists[$class] ??= class_exists($class);
     }
 
     /**
-     * Forget memoised results. Intended for tests.
+     * Forget memoised results.
+     *
+     * Worth calling from a long-lived worker if the application registers morph
+     * maps or autoloaders dynamically between requests.
      */
     public static function flush(): void
     {
-        static::$resolved = [];
+        static::$classExists = [];
     }
 }

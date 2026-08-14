@@ -32,7 +32,7 @@ class ActivityLogAccessMiddleware
                 }
 
                 // Check allowed roles
-                if (!empty($allowedRoles) && !$request->user()->hasAnyRole($allowedRoles)) {
+                if (!empty($allowedRoles) && !$this->hasAnyAllowedRole($request->user(), $allowedRoles)) {
                     abort(403, 'User role not allowed to access Activity Log UI.');
                 }
             }
@@ -53,10 +53,41 @@ class ActivityLogAccessMiddleware
 
         // Check allowed roles
         $allowedRoles = config('activitylog-ui.access.allowed_roles', []);
-        if (!empty($allowedRoles) && !$request->user()?->hasAnyRole($allowedRoles)) {
+        if (!empty($allowedRoles) && !$this->hasAnyAllowedRole($request->user(), $allowedRoles)) {
             abort(403, 'User role not allowed to access Activity Log UI.');
         }
 
         return $next($request);
+    }
+
+    /**
+     * Whether the user holds one of the allowed roles.
+     *
+     * Roles come from whatever package the host uses, so the method may not
+     * exist at all. Calling it blindly turned "you configured allowed_roles
+     * without a role package" into a 500; a user who cannot be shown to hold an
+     * allowed role is simply denied.
+     *
+     * @param  array<int, string>  $allowedRoles
+     */
+    protected function hasAnyAllowedRole(mixed $user, array $allowedRoles): bool
+    {
+        if ($user === null) {
+            return false;
+        }
+
+        if (method_exists($user, 'hasAnyRole')) {
+            return (bool) $user->hasAnyRole($allowedRoles);
+        }
+
+        if (method_exists($user, 'hasRole')) {
+            foreach ($allowedRoles as $role) {
+                if ($user->hasRole($role)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

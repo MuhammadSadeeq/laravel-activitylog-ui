@@ -126,9 +126,18 @@ Refer to the inline comments in the file for every available option.
 
 ## 🔐 Authorization & Access Control
 
-* **On by default:** `authorization.enabled` defaults to `true`, so the UI requires a logged-in user who passes the gate. Setting it to `false` makes the whole UI public — anyone who can reach the URL can read who did what, when, and to which record. Use it for local development only. It can also be set per-environment with `ACTIVITYLOG_UI_AUTHORIZATION=false`.
-* **Gate:** `viewActivityLogUi` is auto-registered (see `ActivitylogUiServiceProvider`). By default it allows any authenticated user, and narrows to the lists below once you set them. Define your own to replace that logic.
-* **Granular lists:** `access.allowed_users` and `access.allowed_roles` restrict the UI to a subset of users. These are enforced even when `authorization.enabled` is `false`.
+Access is decided in this order:
+
+1. **`authorization.enabled`** (default `true`, or `ACTIVITYLOG_UI_AUTHORIZATION`) — requires a logged-in user, then the gate below. Turning it off removes the login requirement.
+2. **`access.allowed_users` / `access.allowed_roles`** — if either is non-empty it is enforced **regardless of step 1**, so an allow-list still requires a matching logged-in user even with authorization disabled.
+3. With authorization off **and** both lists empty, the UI is fully public: anyone who can reach the URL can read who did what, when, and to which record. That combination is for local development only.
+
+Notes:
+
+* **Gate:** `viewActivityLogUi` is auto-registered (see `ActivitylogUiServiceProvider`). By default it allows any authenticated user and narrows to the lists above once you set them. Define your own to replace that logic.
+* **Roles** use `hasAnyRole()` or `hasRole()` if your user model provides them (Spatie Permission and similar). Without either method, a user cannot match a role and is denied.
+* **`route.middleware`** replaces the base stack (`['web']`) only. Authentication and the access middleware are appended afterwards and cannot be removed by it.
+* **Requires a named `login` route** when authorization is on and a guest opens the UI in a browser — that is Laravel's `auth` middleware redirect. Apps without auth scaffolding should configure `redirectGuestsTo()` or leave authorization off. JSON requests get a `401` instead.
 
 ---
 

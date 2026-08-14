@@ -5,6 +5,7 @@ namespace MuhammadSadeeq\ActivitylogUi\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\MorphTypes;
@@ -42,7 +43,16 @@ class Activity extends SpatieActivity
      */
     public function subject(): MorphTo
     {
-        return $this->withDefaultUnlessTypeMissing($this->morphTo(), 'subject_type');
+        $relation = $this->morphTo();
+
+        // Spatie's model drops the soft-delete scope when this is enabled; the
+        // override has to keep doing that or soft-deleted subjects silently
+        // disappear from the log.
+        if (config('activitylog.include_soft_deleted_subjects')) {
+            $relation->withoutGlobalScope(SoftDeletingScope::class);
+        }
+
+        return $this->withDefaultUnlessTypeMissing($relation, 'subject_type');
     }
 
     /**
@@ -80,14 +90,17 @@ class Activity extends SpatieActivity
     protected function morphInstanceTo($target, $name, $type, $id, $ownerKey)
     {
         if (MorphTypes::missing($target)) {
+            // Flagged rather than constrained: SafeMorphTo::getResults() then
+            // answers null outright. A never-matching query would still be sent,
+            // once per row — 782 pointless statements on the test dataset.
             return $this->newMorphTo(
-                $this->newQuery()->whereRaw('1 = 0'),
+                $this->newQuery(),
                 $this,
                 $id,
                 $ownerKey ?? $this->getKeyName(),
                 $type,
                 $name
-            )->withDefault(false);
+            )->markTypeAsMissing()->withDefault(false);
         }
 
         return parent::morphInstanceTo($target, $name, $type, $id, $ownerKey);

@@ -8,23 +8,32 @@ $config = config('activitylog-ui.route', []);
 $prefix = $config['prefix'] ?? 'activitylog-ui';
 $name = $config['name'] ?? 'activitylog-ui.';
 
-// Build middleware based on authorization configuration.
-// The fallback is true so that a missing or partial config fails closed; the
+// A custom stack replaces the base middleware, so someone can swap 'web' for
+// their own group or add a tenancy layer.
+$middleware = $config['middleware'] ?? ['web'];
+
+// Authorization is appended afterwards and is NOT overridable. Letting a custom
+// stack replace it meant an app that set route.middleware lost authentication
+// and the access lists entirely, and served the whole audit log publicly.
+// The fallback is true so a missing or partial config fails closed; the
 // controllers already assumed true here while this file assumed false.
-$middleware = ['web'];
+$accessMiddleware = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
+
 if (config('activitylog-ui.authorization.enabled', true)) {
-    $middleware[] = 'auth';
-    $middleware[] = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
+    if (!in_array('auth', $middleware, true)) {
+        $middleware[] = 'auth';
+    }
+
+    if (!in_array($accessMiddleware, $middleware, true)) {
+        $middleware[] = $accessMiddleware;
+    }
 } elseif (config('activitylog-ui.access.allowed_users') || config('activitylog-ui.access.allowed_roles')) {
     // The middleware enforces these lists even with authorization disabled, but
     // it was only ever registered when authorization was enabled — so anyone who
     // set them while leaving authorization off got no protection at all.
-    $middleware[] = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
-}
-
-// Allow custom middleware override if provided
-if (isset($config['middleware'])) {
-    $middleware = $config['middleware'];
+    if (!in_array($accessMiddleware, $middleware, true)) {
+        $middleware[] = $accessMiddleware;
+    }
 }
 
 $domain = $config['domain'] ?? null;

@@ -2,6 +2,7 @@
 
 namespace MuhammadSadeeq\ActivitylogUi\Eloquent;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 /**
@@ -18,34 +19,67 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 class SafeMorphTo extends MorphTo
 {
     /**
+     * Set when the parent row's own recorded type cannot be resolved, so the
+     * lazy path can answer null without going to the database.
+     */
+    protected bool $typeIsMissing = false;
+
+    public function markTypeAsMissing(): static
+    {
+        $this->typeIsMissing = true;
+
+        return $this;
+    }
+
+    /**
      * {@inheritdoc}
+     *
+     * Unresolvable types are removed from the dictionary and their models given
+     * a null relation; everything else is handed to the parent implementation so
+     * this does not have to track changes to Eloquent's eager-loading algorithm.
      */
     public function getEager()
     {
         foreach (array_keys($this->dictionary) as $type) {
-            if (MorphTypes::missing($type)) {
-                $this->markTypeAsUnresolvable($type);
-
+            if (!MorphTypes::missing($type)) {
                 continue;
             }
 
-            $this->matchToMorphParents($type, $this->getResultsByType($type));
+            $this->resolveTypeToNull($type);
+
+            unset($this->dictionary[$type]);
         }
 
-        return $this->models;
+        return parent::getEager();
     }
 
     /**
-     * Set the relation to null on every model recorded against a missing type.
+     * {@inheritdoc}
      *
-     * Without this the models are simply left unmatched, and the first read of
-     * the relation falls through to a lazy load that throws.
+     * Avoids a guaranteed-empty query per row on the lazy path.
      */
-    protected function markTypeAsUnresolvable(string $type): void
+    public function getResults()
+    {
+        if ($this->typeIsMissing) {
+            return null;
+        }
+
+        return parent::getResults();
+    }
+
+    /**
+     * Give every model recorded against a missing type a null relation.
+     *
+     * Without this they are simply left unmatched, and the first read of the
+     * relation falls through to a lazy load that throws.
+     */
+    protected function resolveTypeToNull(string $type): void
     {
         foreach ($this->dictionary[$type] as $models) {
             foreach ($models as $model) {
-                $model->setRelation($this->relationName, null);
+                if ($model instanceof Model) {
+                    $model->setRelation($this->relationName, null);
+                }
             }
         }
     }
