@@ -4,6 +4,7 @@ namespace MuhammadSadeeq\ActivitylogUi\Services;
 
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -25,14 +26,24 @@ class ActivitylogService
      */
     public function getActivities(array $filters = [], int $perPage = 25, int|string|null $anchorId = null): LengthAwarePaginator
     {
+        $model = new Activity;
+
         $query = Activity::query()
             ->with(config('activitylog-ui.performance.eager_load_relations', ['causer', 'subject']))
-            ->latest('id');
+            // The model's own key, not the literal 'id'. A configured activity
+            // model may name its key something else, and ordering by a column
+            // that does not exist failed every listing.
+            ->orderByDesc($model->getQualifiedKeyName());
 
         $query = $this->applyFilters($query, $filters);
 
-        if ($anchorId !== null) {
-            $query->where((new Activity)->getQualifiedKeyName(), '<=', $anchorId);
+        // Only where the key rises with insertion. On a random UUID key the
+        // predicate does not mean "everything that existed then" — a row created
+        // later collates below the anchor about half the time — so anchoring
+        // would not merely fail to help, it would silently drop rows from the
+        // range it claims to have frozen.
+        if ($anchorId !== null && Activity::hasMonotonicKey()) {
+            $query->where($model->getQualifiedKeyName(), '<=', $anchorId);
         }
 
         return $query->paginate($perPage);
@@ -209,11 +220,20 @@ class ActivitylogService
         }
 
         try {
-            $lock->block(3);
+            $lock->block($this->lockWaitSeconds());
+        } catch (LockTimeoutException $e) {
+            // Whoever holds it is still working. One more read first: the common
+            // case is that they finished during the wait, and taking their result
+            // is the whole point of having waited.
+            $cached = $this->readFilterOptions($name, $key);
+
+            return collect($cached ?? $this->writeFilterOptions($key, $compute()));
         } catch (\Throwable $e) {
-            // Whoever holds it is slower than the wait. Recomputing duplicates
-            // work, but it is bounded; making the request wait longer on someone
-            // else's query is not.
+            // Not a timeout — the lock backend itself failed. Reported, because
+            // silently degrading to a full scan on every request is exactly the
+            // situation this whole mechanism exists to avoid.
+            $this->reportCacheFailure($key, 'lock', $e);
+
             return collect($this->writeFilterOptions($key, $compute()));
         }
 
@@ -229,7 +249,11 @@ class ActivitylogService
             try {
                 $lock->release();
             } catch (\Throwable $e) {
-                // Already gone if it outlived its own TTL; nothing to undo.
+                // Already gone if it outlived its own TTL. Reported all the same:
+                // every store checks ownership before releasing, so a failure
+                // here means the lock backend is unhealthy rather than merely
+                // that someone else took over.
+                $this->reportCacheFailure($key, 'unlock', $e);
             }
         }
     }
@@ -279,9 +303,12 @@ class ActivitylogService
      * A lock for the recompute of one cache key, or null when the configured
      * store cannot provide one.
      *
-     * Not every store is a lock provider — the null and array drivers among them
-     * — and a store that cannot lock must degrade to the previous behaviour
-     * rather than fail the request.
+     * Most shipped stores are lock providers, but what they coordinate differs:
+     * the array driver locks within one PHP process only, and the null driver's
+     * lock always succeeds. Neither serialises anything across requests, which
+     * is correct — with no cache there is nothing to share — but it does mean a
+     * lock acquired is not by itself proof of exclusivity. A store that is not a
+     * provider at all degrades to the previous behaviour rather than failing.
      */
     protected function cacheLock(string $key): ?Lock
     {

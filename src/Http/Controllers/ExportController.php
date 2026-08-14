@@ -93,6 +93,7 @@ class ExportController extends Controller
             }
 
             // Export immediately with filters
+            $options['owner_id'] = $request->user()?->id;
             $filePath = $this->exportService->export($filters, $format, $options);
             $downloadUrl = $this->exportService->getDownloadUrl($filePath);
 
@@ -170,6 +171,17 @@ class ExportController extends Controller
         // the file was written to the configured one.
         $disk = $this->exportService->disk();
 
+        // Passing the route's own access checks says the user may use this
+        // feature, not that this particular extract is theirs. An export is a
+        // filtered slice of the audit log, so serving one to whoever names its
+        // file hands over exactly the records someone else's filters selected.
+        //
+        // 404 rather than 403: the filenames carry a timestamp and a random
+        // suffix, and confirming which ones exist is itself worth withholding.
+        if (!$this->exportService->userMayDownload($normalized, $request->user()?->id)) {
+            abort(404, 'File not found.');
+        }
+
         if (!$disk->exists($normalized)) {
             abort(404, 'File not found.');
         }
@@ -194,7 +206,9 @@ class ExportController extends Controller
         ]);
 
         $jobId = $request->input('job_id');
-        $progress = $this->exportService->getExportProgress($jobId);
+        // The status carries the download URL, so it is as sensitive as the file
+        // and is scoped to whoever started the job.
+        $progress = $this->exportService->getExportProgress($jobId, $request->user()?->id);
 
         return response()->json([
             'success' => true,

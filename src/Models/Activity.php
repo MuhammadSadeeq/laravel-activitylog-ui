@@ -64,7 +64,44 @@ class Activity extends SpatieActivity
     }
 
     /**
-     * @return array{table: string, connection: string|null}|null
+     * The key metadata is taken from the configured model too. Ordering and the
+     * pagination anchor both address rows by their key, and assuming 'id' on a
+     * model that names its key something else produced a "column not found" on
+     * every listing.
+     */
+    public function getKeyName()
+    {
+        return static::configuredActivitySource()['key_name'] ?? parent::getKeyName();
+    }
+
+    public function getKeyType()
+    {
+        return static::configuredActivitySource()['key_type'] ?? parent::getKeyType();
+    }
+
+    public function getIncrementing()
+    {
+        return static::configuredActivitySource()['incrementing'] ?? parent::getIncrementing();
+    }
+
+    /**
+     * Whether rows can be ordered and anchored by their key.
+     *
+     * The pagination anchor is a `key <= x` predicate over a list ordered by that
+     * key, which only means "everything that existed then" when the key rises
+     * with insertion. A random UUID does not: one generated after the anchor
+     * collates below it about half the time, joins the supposedly frozen set,
+     * and shifts the very offsets the anchor exists to hold still.
+     */
+    public static function hasMonotonicKey(): bool
+    {
+        $model = new static();
+
+        return $model->getIncrementing() && in_array($model->getKeyType(), ['int', 'integer'], true);
+    }
+
+    /**
+     * @return array{table: string, connection: string|null, key_name: string, key_type: string, incrementing: bool}|null
      */
     protected static function configuredActivitySource(): ?array
     {
@@ -104,6 +141,9 @@ class Activity extends SpatieActivity
             return [
                 'table' => $instance->getTable(),
                 'connection' => $instance->getConnectionName(),
+                'key_name' => $instance->getKeyName(),
+                'key_type' => $instance->getKeyType(),
+                'incrementing' => $instance->getIncrementing(),
             ];
         } catch (\Throwable $e) {
             // Fail closed. Falling back to the default table here would quietly
@@ -133,8 +173,25 @@ class Activity extends SpatieActivity
     public static function sourceFingerprint(): string
     {
         $model = new static();
+        $connection = $model->getConnectionName() ?? 'default';
 
-        return substr(sha1(($model->getConnectionName() ?? 'default') . '|' . $model->getTable()), 0, 12);
+        // The database behind the connection, not just its name. A tenancy layer
+        // repoints one named connection at a different database per request, so
+        // a fingerprint made of the name alone is identical for every tenant —
+        // and the caches it keys then serve one tenant's causers, event types
+        // and searchable morph types to the next. That is a disclosure, not
+        // merely stale data.
+        $database = '?';
+
+        try {
+            $database = (string) $model->getConnection()->getDatabaseName();
+        } catch (\Throwable $e) {
+            // A connection that cannot be resolved is a problem for the query
+            // that follows, not for building a key. Keeping the name alone is
+            // the previous behaviour.
+        }
+
+        return substr(sha1($connection . '|' . $database . '|' . $model->getTable()), 0, 12);
     }
 
     /**

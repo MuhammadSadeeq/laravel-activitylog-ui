@@ -9,6 +9,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Illuminate\Routing\Controller;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 use MuhammadSadeeq\ActivitylogUi\Services\ActivitylogService;
 use MuhammadSadeeq\ActivitylogUi\Services\AnalyticsService;
 
@@ -378,7 +379,12 @@ class ActivityLogController extends Controller
                 // Only page 1 can mint one: the first row of any later page is
                 // partway down the list, and pinning to it would silently hide
                 // everything above.
-                'anchor_id' => $anchorId ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null),
+                //
+                // Null on a key that does not rise with insertion, so a client is
+                // not handed an anchor the server will not honour.
+                'anchor_id' => Activity::hasMonotonicKey()
+                    ? ($anchorId ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null))
+                    : null,
             ]);
         } catch (ValidationException | HttpExceptionInterface $e) {
             // A refused input is the answer, not a failure to produce one.

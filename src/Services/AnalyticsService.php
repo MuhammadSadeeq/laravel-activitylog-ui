@@ -266,16 +266,22 @@ class AnalyticsService
 
         $query = Activity::query()
             ->selectRaw("{$expression} as day, count(*) as aggregate")
-            ->whereBetween('created_at', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()]);
+            // Half-open, not whereBetween(startOfDay, endOfDay). Bindings are
+            // formatted to whole seconds, so endOfDay's .999999 became :59 and a
+            // row stored at 23:59:59.5 fell outside a range that should contain
+            // it — a row the per-day count it replaced did include.
+            ->where('created_at', '>=', $startDate->copy()->startOfDay())
+            ->where('created_at', '<', $endDate->copy()->startOfDay()->addDay());
 
         $this->applyFilters($query, $filters);
 
         $counts = $query->groupBy(DB::raw($expression))
-            ->pluck('aggregate', 'day')
-            // Drivers return this as a date string, a datetime, or a date object
-            // depending on the cast; the day is the first ten characters of all
-            // of them.
-            ->mapWithKeys(fn ($count, $day) => [substr((string) $day, 0, 10) => (int) $count]);
+            ->get()
+            // get() rather than pluck(): a driver may hand back a DateTime for a
+            // date column — SQL Server does with SQLSRV_ATTR_FETCHES_DATETIME_TYPE
+            // — and pluck would use the object as an array key before this could
+            // normalise it.
+            ->mapWithKeys(fn ($row) => [$this->dayKey($row->day) => (int) $row->aggregate]);
 
         $currentDate = $startDate->copy();
         while ($currentDate <= $endDate) {
@@ -318,6 +324,22 @@ class AnalyticsService
             'pgsql', 'sqlsrv' => "CAST({$column} AS DATE)",
             default => "DATE({$column})",
         };
+    }
+
+    /**
+     * Normalise whatever a driver returns for a grouped date into 'Y-m-d'.
+     *
+     * Most hand back a string, but a date column can arrive as a DateTime — SQL
+     * Server does so with SQLSRV_ATTR_FETCHES_DATETIME_TYPE — and casting one to
+     * a string throws rather than producing a date.
+     */
+    protected function dayKey(mixed $value): string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        return substr((string) $value, 0, 10);
     }
 
     /**
@@ -578,7 +600,7 @@ class AnalyticsService
                 ->groupBy(DB::raw($expression))
                 ->orderBy('date')
                 ->get()
-                ->keyBy(fn ($row) => substr((string) $row->date, 0, 10));
+                ->keyBy(fn ($row) => $this->dayKey($row->date));
 
             $heatmapData = [];
             $current = $startDate->copy();
@@ -625,17 +647,36 @@ class AnalyticsService
      */
     public function getAnomalies(int $days = 30): array
     {
+        // The one grouped-by-day query the driver-aware expression had not
+        // reached, so this was still a syntax error on PostgreSQL and SQL Server.
+        $expression = $this->dateExpression();
+
         $dailyActivity = Activity::select(
-                DB::raw('DATE(created_at) as date'),
+                DB::raw("{$expression} as date"),
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', now()->subDays($days))
-            ->groupBy('date')
+            ->groupBy(DB::raw($expression))
             ->orderBy('date')
-            ->pluck('count', 'date');
+            ->get()
+            ->mapWithKeys(fn ($row) => [$this->dayKey($row->date) => (int) $row->count]);
 
-        $mean = $dailyActivity->avg();
+        // No activity in the window means no anomalies, not a crash: avg() is
+        // null on an empty collection and the float-typed parameter below then
+        // raised a TypeError, so asking for anomalies over a quiet period 500'd.
+        if ($dailyActivity->isEmpty()) {
+            return [];
+        }
+
+        $mean = (float) $dailyActivity->avg();
         $stdDev = $this->calculateStandardDeviation($dailyActivity->values()->toArray(), $mean);
+
+        // Every day identical — including a single day, where the deviation of
+        // one value is zero. Nothing stands out, and dividing by it would not.
+        if ($stdDev <= 0.0) {
+            return [];
+        }
+
         $threshold = $mean + (2 * $stdDev); // 2 standard deviations
 
         $anomalies = [];

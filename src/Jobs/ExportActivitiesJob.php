@@ -70,8 +70,13 @@ class ExportActivitiesJob implements ShouldQueue
             // Update job status to processing
             $this->updateJobStatus('processing', 'Starting export...');
 
-            // Perform the actual export
-            $filePath = $exportService->export($this->filters, $this->format, $this->options);
+            // Perform the actual export. The owner travels with it so the
+            // download endpoint can tell whose extract this is.
+            $filePath = $exportService->export(
+                $this->filters,
+                $this->format,
+                $this->options + ['owner_id' => $this->userId]
+            );
             $downloadUrl = $exportService->getDownloadUrl($filePath);
 
             // Update job status to completed
@@ -128,6 +133,7 @@ class ExportActivitiesJob implements ShouldQueue
             'message' => $message,
             'progress' => $status === 'completed' ? 100 : ($status === 'processing' ? 50 : 0),
             'download_url' => $downloadUrl,
+            'user_id' => $this->userId,
             'updated_at' => now()->toISOString(),
         ];
 

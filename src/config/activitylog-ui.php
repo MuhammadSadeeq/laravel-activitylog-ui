@@ -237,6 +237,18 @@ return [
         // them immediately.
         'cache_ttl' => 3600,
 
+        // When those options expire, one request rebuilds them and the others
+        // wait this long for its result rather than all running the same scan.
+        // A waiter that times out rebuilds them itself, so raising this trades
+        // slower worst-case requests for less duplicated work.
+        'filter_lock_wait' => 3,
+
+        // How long that rebuild may hold the lock. Wants to exceed the slowest
+        // expected scan: too low and a long rebuild loses the lock partway
+        // through, letting a second request start the same work; too high and a
+        // worker killed mid-scan blocks rebuilds until it expires.
+        'filter_lock_ttl' => 30,
+
         'eager_load_relations' => ['causer', 'subject'],
     ],
 ];

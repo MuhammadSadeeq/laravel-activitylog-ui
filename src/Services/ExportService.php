@@ -98,13 +98,78 @@ class ExportService
     {
         $activities = $this->getActivitiesForExport($filters, $options);
 
-        return match ($format) {
+        $path = match ($format) {
             'csv' => $this->exportToCsv($activities, $options),
             'xlsx' => $this->exportToExcel($activities, $options),
             'pdf' => $this->exportToPdf($activities, $options),
             'json' => $this->exportToJson($activities, $options),
             default => throw new \InvalidArgumentException("Unsupported export format: {$format}"),
         };
+
+        $this->recordOwner($path, $options['owner_id'] ?? null);
+
+        return $path;
+    }
+
+    /**
+     * Remember who an export belongs to.
+     *
+     * The download endpoint receives a path and nothing else, so without this it
+     * could only ask "may this user use the export feature at all" — and every
+     * user who could was then able to download every other user's export by
+     * naming its file. An audit export is a filtered extract of the audit log,
+     * so that is a disclosure of exactly the records the filters were hiding.
+     */
+    protected function recordOwner(string $path, int|string|null $ownerId): void
+    {
+        try {
+            cache()->put(
+                $this->ownerCacheKey($path),
+                ['owner_id' => $ownerId],
+                // Outlives the files themselves, so a record never expires while
+                // the export it protects is still downloadable.
+                now()->addHours((int) config('activitylog-ui.exports.cleanup.after_hours', 24) + 24)
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Could not record the owner of an export', ['path' => $path, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Whether a user may download a given export.
+     *
+     * Fails closed. An export whose owner cannot be established is refused
+     * rather than served: the files live for a day by default, so the cost of
+     * being wrong is a re-export, while the cost of guessing the other way is
+     * handing someone else's audit extract over.
+     */
+    public function userMayDownload(string $path, int|string|null $userId): bool
+    {
+        try {
+            $record = cache()->get($this->ownerCacheKey($path));
+        } catch (\Throwable $e) {
+            Log::warning('Could not read the owner of an export', ['path' => $path, 'error' => $e->getMessage()]);
+
+            return false;
+        }
+
+        if (!is_array($record) || !array_key_exists('owner_id', $record)) {
+            return false;
+        }
+
+        // An export made with no authenticated user — authorization disabled, or
+        // a console-triggered run — belongs to no one and is downloadable by
+        // anyone who already passes the route's own checks.
+        if ($record['owner_id'] === null) {
+            return true;
+        }
+
+        return $userId !== null && (string) $record['owner_id'] === (string) $userId;
+    }
+
+    protected function ownerCacheKey(string $path): string
+    {
+        return config('activitylog-ui.performance.cache_prefix') . '.export-owner.' . sha1($path);
     }
 
     /**
@@ -468,10 +533,19 @@ class ExportService
     /**
      * Get export progress for queued exports.
      */
-    public function getExportProgress(string $jobId): array
+    public function getExportProgress(string $jobId, int|string|null $userId = null): array
     {
         // Get job status from cache
         $status = cache()->get("export_job_{$jobId}");
+
+        // Answered as "not found" rather than "forbidden", so the endpoint does
+        // not confirm which job ids exist. The status carries a download URL, so
+        // it is as sensitive as the file.
+        if (is_array($status) && array_key_exists('user_id', $status) && $status['user_id'] !== null) {
+            if ($userId === null || (string) $status['user_id'] !== (string) $userId) {
+                $status = null;
+            }
+        }
 
         if (!$status) {
             return [
@@ -552,7 +626,11 @@ class ExportService
      */
     public function queueExport(array $filters, string $format, array $options = [], int|string|null $userId = null): string
     {
-        $jobId = uniqid('export_');
+        // Cryptographically random, because the id is the only thing a caller
+        // presents when asking after a job. uniqid() is the current microsecond
+        // in hex, so ids issued around the same moment differ in their last few
+        // characters and another user's job was guessable rather than secret.
+        $jobId = 'export_' . bin2hex(random_bytes(16));
 
         try {
             // Create initial job status
@@ -562,6 +640,7 @@ class ExportService
                 'message' => 'Export queued for processing...',
                 'progress' => 0,
                 'download_url' => null,
+                'user_id' => $userId,
                 'created_at' => now()->toISOString(),
                 'updated_at' => now()->toISOString(),
             ];
@@ -585,6 +664,7 @@ class ExportService
                 'message' => 'Failed to queue export: ' . $e->getMessage(),
                 'progress' => 0,
                 'download_url' => null,
+                'user_id' => $userId,
                 'created_at' => now()->toISOString(),
                 'updated_at' => now()->toISOString(),
             ], now()->addHours(24));
