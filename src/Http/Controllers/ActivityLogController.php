@@ -32,7 +32,7 @@ class ActivityLogController extends Controller
 
         $filters = $this->getFiltersFromRequest($request);
         $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
-        $perPage = $request->input('per_page', config('activitylog-ui.ui.default_per_page', 25));
+        $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, 500);
 
         $data = ['filters' => $filters, 'view' => $view, 'perPage' => $perPage];
 
@@ -92,7 +92,7 @@ class ActivityLogController extends Controller
 
         $filters = $this->getFiltersFromRequest($request);
         $view = $request->input('view', config('activitylog-ui.ui.default_view', 'table'));
-        $perPage = $request->input('per_page', config('activitylog-ui.ui.default_per_page', 25));
+        $perPage = $this->intInput($request, 'per_page', (int) config('activitylog-ui.ui.default_per_page', 25), 1, 500);
 
         if ($view === 'timeline') {
             $data = $this->activitylogService->getTimelineActivities($filters, $perPage);
@@ -232,15 +232,14 @@ class ActivityLogController extends Controller
 
         // Keep existing behavior: if dates are not fully provided, derive from period.
         if (empty($filters['start_date']) || empty($filters['end_date'])) {
-            $period = $request->input('period', 'today');
+            $period = $this->stringInput($request, 'period', 'today');
 
-            if ($period === 'today') {
-                $filters['start_date'] = now()->startOfDay()->toDateString();
-                $filters['end_date'] = now()->endOfDay()->toDateString();
-            } else {
-                $filters['start_date'] = now()->subDays((int)$period)->startOfDay()->toDateString();
-                $filters['end_date'] = now()->endOfDay()->toDateString();
-            }
+            // Anything that is not a day count falls back to today, rather than
+            // casting to 0 and quietly returning a single day labelled otherwise.
+            $days = is_numeric($period) ? (int) max(0, min(3650, (int) $period)) : 0;
+
+            $filters['start_date'] = now()->subDays($days)->startOfDay()->toDateString();
+            $filters['end_date'] = now()->endOfDay()->toDateString();
         }
 
         try {
@@ -274,7 +273,7 @@ class ActivityLogController extends Controller
             'user_type' => 'required|string',
         ]);
 
-        $userType = $request->input('user_type');
+        $userType = $this->stringInput($request, 'user_type');
         $profile = $this->analyticsService->getUserActivityProfile($userId, $userType);
 
         return response()->json([
@@ -290,7 +289,7 @@ class ActivityLogController extends Controller
     {
         $this->authorize('viewActivityLogUi');
 
-        $days = $request->input('days', 365);
+        $days = $this->intInput($request, 'days', 365, 1, 3650);
         $heatmapData = $this->analyticsService->getActivityHeatmap($days);
 
         return response()->json([
@@ -306,8 +305,8 @@ class ActivityLogController extends Controller
     {
         $this->authorize('viewActivityLogUi');
 
-        $hours = $request->input('hours', 1);
-        $limit = $request->input('limit', 50);
+        $hours = $this->intInput($request, 'hours', 1, 1, 8760);
+        $limit = $this->intInput($request, 'limit', 50, 1, 500);
 
         $activities = $this->activitylogService->getRecentActivities($hours, $limit);
 
@@ -326,7 +325,7 @@ class ActivityLogController extends Controller
 
         try {
             $filters = $this->getFiltersFromRequest($request);
-            $perPage = $request->input('per_page', 25);
+            $perPage = $this->intInput($request, 'per_page', 25, 1, 500);
 
             $activities = $this->activitylogService->getActivities($filters, $perPage);
 
@@ -430,7 +429,7 @@ class ActivityLogController extends Controller
         $this->authorize('viewActivityLogUi');
 
         try {
-            $query = $request->input('q', '');
+            $query = $this->stringInput($request, 'q');
             $suggestions = [];
 
             if (strlen($query) >= 2) {
@@ -552,6 +551,35 @@ class ActivityLogController extends Controller
             $activity->subject_id,
             $activity->id
         );
+    }
+
+
+    /**
+     * Read a bounded integer from the request.
+     *
+     * These values are handed straight to int-typed service parameters, so an
+     * array or a non-numeric string produced an uncaught TypeError — a 500 on a
+     * public-by-default route from nothing more than `?per_page[]=25`.
+     */
+    protected function intInput(Request $request, string $key, int $default, int $min, int $max): int
+    {
+        $value = $request->input($key, $default);
+
+        if (is_array($value) || !is_numeric($value)) {
+            return $default;
+        }
+
+        return (int) max($min, min($max, (int) $value));
+    }
+
+    /**
+     * Read a plain string from the request, rejecting arrays and other shapes.
+     */
+    protected function stringInput(Request $request, string $key, string $default = ''): string
+    {
+        $value = $request->input($key, $default);
+
+        return is_scalar($value) ? (string) $value : $default;
     }
 
     /**
