@@ -74,9 +74,10 @@ class ActivitiesExport implements FromCollection, WithHeadings, WithMapping, Wit
             };
         }
 
-        // Same treatment as the CSV path: a value beginning with =, +, - or @ is
-        // executed as a formula when the workbook is opened.
-        return array_map([\MuhammadSadeeq\ActivitylogUi\Services\ExportService::class, 'neutraliseFormula'], $row);
+        // Narrower than the CSV path on purpose: a workbook only treats a leading
+        // '=' as a formula, so prefixing the rest of the CSV set would rewrite
+        // legitimate audit text.
+        return array_map([\MuhammadSadeeq\ActivitylogUi\Services\ExportService::class, 'neutraliseWorkbookFormula'], $row);
     }
 
     /**

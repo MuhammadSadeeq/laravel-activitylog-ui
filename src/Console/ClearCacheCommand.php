@@ -4,6 +4,8 @@ namespace MuhammadSadeeq\ActivitylogUi\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use MuhammadSadeeq\ActivitylogUi\Eloquent\MorphTypes;
+use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 use MuhammadSadeeq\ActivitylogUi\Services\ActivitylogService;
 
 class ClearCacheCommand extends Command
@@ -57,6 +59,12 @@ class ClearCacheCommand extends Command
         if ($cleared > 0) {
             $this->info("Cleared {$cleared} cache " . ($cleared === 1 ? 'entry' : 'entries') . ' written before the keys were versioned.');
         }
+
+        // In-process memoisation. Irrelevant to a one-off command in its own
+        // process, but this command is also called from deploy scripts and from
+        // long-lived workers via Artisan::call().
+        Activity::flushSearchCaches();
+        MorphTypes::flush();
 
         // Analytics keys carry a filter hash or a user id, so they cannot be
         // enumerated and this command does not clear them. Said plainly rather

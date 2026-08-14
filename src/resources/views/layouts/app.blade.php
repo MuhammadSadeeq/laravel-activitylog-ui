@@ -251,13 +251,20 @@
                      * causer the dropdown cannot name.
                      */
                     resolveSelectedCauser() {
-                        if (!this.filters.causer_id) {
+                        // Tested the way the backend tests it, which accepts every
+                        // value but null and ''. A truthiness check treated the
+                        // integer id 0 as no filter at all, so a saved view holding
+                        // one showed "All users" over a filtered list — the exact
+                        // mismatch this method exists to prevent.
+                        const causerId = this.filters.causer_id;
+
+                        if (causerId === null || causerId === undefined || causerId === '') {
                             this.selectedCauser = null;
                             return;
                         }
 
                         const match = this.availableCausers.find(c =>
-                            String(c.id) === String(this.filters.causer_id) &&
+                            String(c.id) === String(causerId) &&
                             (!this.filters.causer_type || c.type === this.filters.causer_type)
                         );
 
@@ -274,11 +281,11 @@
                             : 'Causer';
 
                         this.selectedCauser = {
-                            id: this.filters.causer_id,
+                            id: causerId,
                             type: this.filters.causer_type,
-                            name: `${type} #${this.filters.causer_id}`,
+                            name: `${type} #${causerId}`,
                             email: null,
-                            label: `${type} #${this.filters.causer_id}`,
+                            label: `${type} #${causerId}`,
                         };
                     },
 
@@ -872,6 +879,55 @@
         // does not start a second poll loop against it.
         window.exportProgressPolls = new Set();
 
+        // Pending jobs are also written to storage and picked up again on load.
+        // A job id lives only on the page that started it, and the server has no
+        // way to list a user's jobs — so a refresh, a navigation, or this
+        // package's own session-expiry reload used to strand the export: still
+        // running, still cached, and no longer reachable by anything. The
+        // messages telling the user to reload and check later depend on this.
+        window.ActivitylogUiExports = {
+            key: 'activitylog_pending_exports',
+
+            all() {
+                try {
+                    const stored = JSON.parse(localStorage.getItem(this.key) || '[]');
+                    if (!Array.isArray(stored)) return [];
+
+                    // Anything older than the poll deadline is not worth resuming.
+                    const cutoff = Date.now() - (20 * 60 * 1000);
+                    return stored.filter(job => job && job.jobId && (job.startedAt || 0) > cutoff);
+                } catch (error) {
+                    return [];
+                }
+            },
+
+            add(jobId, format) {
+                try {
+                    const jobs = this.all().filter(job => job.jobId !== jobId);
+                    jobs.push({ jobId, format, startedAt: Date.now() });
+                    localStorage.setItem(this.key, JSON.stringify(jobs));
+                } catch (error) {
+                    // Storage can be unavailable or full. Losing the ability to
+                    // resume is not a reason to fail the export in progress.
+                    console.error('Could not record the pending export:', error);
+                }
+            },
+
+            remove(jobId) {
+                try {
+                    localStorage.setItem(this.key, JSON.stringify(this.all().filter(job => job.jobId !== jobId)));
+                } catch (error) {
+                    console.error('Could not clear the pending export:', error);
+                }
+            },
+
+            resume() {
+                this.all().forEach(job => window.pollExportProgress(job.jobId, job.format));
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => window.ActivitylogUiExports.resume());
+
         /**
          * Follow a queued export to completion.
          *
@@ -886,6 +942,7 @@
             }
 
             window.exportProgressPolls.add(jobId);
+            window.ActivitylogUiExports.add(jobId, format);
 
             const endpoint = '{{ route("activitylog-ui.api.export.progress") }}';
             // Comfortably past the default job timeout (300s) times its retries,
@@ -951,6 +1008,8 @@
                             }
                         }
 
+                        window.ActivitylogUiExports.remove(jobId);
+
                         return;
                     }
 
@@ -958,6 +1017,8 @@
                         if (window.notify) {
                             window.notify.error('Export failed', status.message || 'The export could not be completed.', { timeout: 0 });
                         }
+
+                        window.ActivitylogUiExports.remove(jobId);
 
                         return;
                     }
@@ -970,6 +1031,12 @@
                             if (window.notify) {
                                 window.notify.warning('Export status unavailable', 'We lost track of this export. If it completes you will still receive the email, if notifications are enabled.');
                             }
+
+                            // Dropped rather than kept for a later reload: there is
+                            // no status left to poll, so resuming would only repeat
+                            // this. A network failure is different, and is kept.
+                            window.ActivitylogUiExports.remove(jobId);
+
                             return;
                         }
                     } else {
@@ -1259,12 +1326,27 @@
                 add(type, title, message, options = {}) {
                     const id = Date.now() + Math.random();
 
+                    // Sticky ones do not expire, and a run of failing exports
+                    // raises two apiece. Past a handful they cover the page and
+                    // bury the newest, which is the one worth reading.
+                    //
+                    // Only those still shown are counted: removal hides one now
+                    // and splices it after the transition, so counting the array
+                    // alone meant several additions in a row all picked the same
+                    // already-dismissed entry and the cap never bit.
+                    const sticky = this.notifications.filter(n => n.sticky && n.show);
+
+                    if (sticky.length >= 5) {
+                        this.remove(sticky[0].id);
+                    }
+
                     this.notifications.push({
                         id,
                         type,
                         title,
                         message,
                         link: options.link || null,
+                        sticky: options.timeout === 0,
                         show: true
                     });
 

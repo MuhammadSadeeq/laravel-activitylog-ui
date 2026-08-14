@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 class MorphTypes
 {
     /**
-     * Memoised class_exists() results, keyed by the RESOLVED class name.
+     * Memoised results, keyed by the RESOLVED class name.
      *
      * Keying on the resolved class rather than the recorded type means a morph
      * map registered or changed later produces a different key, so a stale
@@ -19,7 +19,7 @@ class MorphTypes
      *
      * @var array<string, bool>
      */
-    protected static array $classExists = [];
+    protected static array $queryable = [];
 
     /**
      * Whether a recorded morph type cannot be turned into a model class.
@@ -34,7 +34,7 @@ class MorphTypes
     }
 
     /**
-     * Whether a recorded morph type resolves to a loadable model class.
+     * Whether a recorded morph type resolves to a model Eloquent can query.
      *
      * An autoloader failure is deliberately NOT caught. A class that exists but
      * cannot be loaded — a parse error, a missing dependency — is a deployment
@@ -49,7 +49,33 @@ class MorphTypes
             return false;
         }
 
-        return static::$classExists[$class] ??= class_exists($class);
+        return static::$queryable[$class] ??= static::isQueryableModel($class);
+    }
+
+    /**
+     * class_exists() alone is not enough to answer that.
+     *
+     * Everything that consumes this — eager loading a morph relation, building a
+     * whereHasMorph — hands the class to Eloquent, which does `new $class` and
+     * then calls newQuery() on it. A recorded type naming a class that is no
+     * longer a model, has become abstract, or has gained a required constructor
+     * argument passes class_exists() and then fatals at that point instead.
+     */
+    protected static function isQueryableModel(string $class): bool
+    {
+        if (!class_exists($class) || !is_a($class, Model::class, true)) {
+            return false;
+        }
+
+        $reflection = new \ReflectionClass($class);
+
+        if (!$reflection->isInstantiable()) {
+            return false;
+        }
+
+        $constructor = $reflection->getConstructor();
+
+        return $constructor === null || $constructor->getNumberOfRequiredParameters() === 0;
     }
 
     /**
@@ -60,6 +86,6 @@ class MorphTypes
      */
     public static function flush(): void
     {
-        static::$classExists = [];
+        static::$queryable = [];
     }
 }

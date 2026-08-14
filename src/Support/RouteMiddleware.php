@@ -2,9 +2,8 @@
 
 namespace MuhammadSadeeq\ActivitylogUi\Support;
 
-use Illuminate\Auth\Middleware\Authenticate;
-use Illuminate\Routing\Router;
 use MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware;
+use MuhammadSadeeq\ActivitylogUi\Http\Middleware\AuthenticateActivityLogUser;
 
 /**
  * Builds the route middleware stack for the UI.
@@ -16,116 +15,53 @@ use MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware;
 class RouteMiddleware
 {
     /**
-     * Append authentication and the access middleware to a configured stack.
+     * The package's own entries, and the alias it registers for one of them.
+     */
+    protected const OWN = [
+        AuthenticateActivityLogUser::class,
+        ActivityLogAccessMiddleware::class,
+        'activitylog-access',
+    ];
+
+    /**
+     * Append authentication and the access checks to a configured stack.
+     *
+     * Nothing here inspects the router. Aliases and middleware groups live on
+     * the router instance, which is populated by the HTTP kernel and not by the
+     * console kernel that `route:cache` boots through — so any decision made
+     * from them would differ between the cached routes and the live ones.
      *
      * @param  array<int, mixed>  $middleware
      * @return array<int, mixed>
      */
     public static function protect(array $middleware): array
     {
-        if (! static::authenticates($middleware)) {
-            $middleware[] = 'auth';
-        }
-
-        // Any existing occurrence is dropped and the middleware re-appended, so it
-        // always runs last. A stack that listed it before its own authentication
-        // layer ran the access checks against a guest: allowed_users compares
-        // against $request->user()->email, so every request was refused with a 401
-        // that signing in could not fix.
+        // Existing occurrences are dropped and re-appended, so both always run
+        // last and in this order. A stack that listed the access middleware
+        // before its own authentication — directly, or through the alias this
+        // package registers — ran the allow-list checks against a guest, and
+        // refused every request with a 401 that signing in could not clear.
         $middleware = array_values(array_filter(
             $middleware,
-            fn ($entry) => $entry !== ActivityLogAccessMiddleware::class
+            fn ($entry) => ! static::isOwn($entry)
         ));
 
+        $middleware[] = AuthenticateActivityLogUser::class;
         $middleware[] = ActivityLogAccessMiddleware::class;
 
         return $middleware;
     }
 
     /**
-     * Whether a stack already authenticates the request.
-     *
-     * Matching only the literal string 'auth' meant a stack using a named guard
-     * ('auth:admin'), the class name, or a group containing either got a second,
-     * default-guard 'auth' appended. On an app whose users live behind a
-     * non-default guard that entry always fails, so the UI became unreachable for
-     * exactly the people configured to reach it.
-     *
-     * @param  array<int, mixed>  $middleware
+     * Whether an entry is one of this package's own.
      */
-    public static function authenticates(array $middleware, int $depth = 0): bool
+    protected static function isOwn(mixed $entry): bool
     {
-        foreach ($middleware as $entry) {
-            if (! is_string($entry)) {
-                continue;
-            }
-
-            if (static::isAuthentication($entry)) {
-                return true;
-            }
-
-            // Groups nest, and 'web' is itself a group; three levels is well past
-            // anything real and stops a self-referential group from looping.
-            if ($depth < 3 && ($group = static::group($entry)) !== null) {
-                if (static::authenticates($group, $depth + 1)) {
-                    return true;
-                }
-            }
+        if (! is_string($entry)) {
+            return false;
         }
 
-        return false;
-    }
-
-    /**
-     * Whether a single middleware entry authenticates.
-     */
-    protected static function isAuthentication(string $entry): bool
-    {
-        // 'auth:admin' and 'auth:sanctum,web' are the same middleware with
-        // parameters; only the part before the colon names it.
-        $name = explode(':', $entry, 2)[0];
-
-        if (in_array($name, ['auth', 'auth.basic', 'auth.session'], true)) {
-            return true;
-        }
-
-        // An alias may point at any class, including the application's own
-        // Authenticate subclass.
-        $resolved = static::alias($name) ?? $name;
-
-        return is_string($resolved)
-            && class_exists($resolved)
-            && is_a($resolved, Authenticate::class, true);
-    }
-
-    protected static function alias(string $name): ?string
-    {
-        $aliases = static::router()?->getMiddleware() ?? [];
-
-        return is_string($aliases[$name] ?? null) ? $aliases[$name] : null;
-    }
-
-    /**
-     * @return array<int, mixed>|null
-     */
-    protected static function group(string $name): ?array
-    {
-        $groups = static::router()?->getMiddlewareGroups() ?? [];
-
-        return is_array($groups[$name] ?? null) ? $groups[$name] : null;
-    }
-
-    protected static function router(): ?Router
-    {
-        // Resolved lazily and defensively: this runs while routes are being
-        // registered, and a container without a bound router must degrade to
-        // literal matching rather than fail route registration outright.
-        try {
-            $router = app('router');
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return $router instanceof Router ? $router : null;
+        // Parameters are stripped so 'activitylog-access:something' matches too.
+        return in_array(explode(':', $entry, 2)[0], static::OWN, true);
     }
 }

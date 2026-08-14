@@ -358,7 +358,13 @@ class Activity extends SpatieActivity
      */
     protected static function searchableCauserTypes(): array
     {
-        return static::query()
+        // Memoised for the life of the process. This is a DISTINCT over the whole
+        // activity table, and applyFilters() runs once per query — which for an
+        // analytics dashboard is dozens of times. A 90-day timeline with a search
+        // term issued around a hundred of these scans before its first result.
+        $key = static::sourceFingerprint();
+
+        return static::$searchableCauserTypes[$key] ??= static::query()
             ->newQuery()
             ->distinct()
             ->whereNotNull('causer_type')
@@ -366,6 +372,22 @@ class Activity extends SpatieActivity
             ->filter(fn ($type) => !MorphTypes::missing($type))
             ->values()
             ->all();
+    }
+
+    /** @var array<string, array<int, string>> */
+    protected static array $searchableCauserTypes = [];
+
+    /**
+     * Forget what has been memoised about the causer tables.
+     *
+     * Both caches are process-wide, so a long-lived queue worker would otherwise
+     * never see a causer type recorded for the first time, or a column added by
+     * a migration that ran after it started.
+     */
+    public static function flushSearchCaches(): void
+    {
+        static::$searchableCauserTypes = [];
+        static::$searchableColumns = [];
     }
 
     /**

@@ -56,11 +56,13 @@ class ExportService
     }
 
     /**
-     * Neutralise spreadsheet formulas in an exported cell.
+     * Neutralise a formula in a cell destined for a CSV file.
      *
      * A logged description or causer name beginning with =, +, - or @ is executed
-     * as a formula when the file is opened, which turns an audit export into a
-     * delivery mechanism for whatever an attacker managed to get logged.
+     * as a formula when a spreadsheet application opens the CSV, which turns an
+     * audit export into a delivery mechanism for whatever an attacker managed to
+     * get logged. There is no cell type in a CSV to distinguish the two, so the
+     * whole set has to be covered.
      */
     public static function neutraliseFormula(mixed $value): mixed
     {
@@ -69,6 +71,24 @@ class ExportService
         }
 
         return in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true) ? "'" . $value : $value;
+    }
+
+    /**
+     * The same, for a cell written into an XLSX workbook.
+     *
+     * A workbook stores formulas as their own cell type rather than inferring
+     * them from the text, and PhpSpreadsheet's value binder promotes a string to
+     * one only when it begins with '='. Applying the CSV set here corrupted
+     * ordinary audit text: a description of "- payment reversed" was written as
+     * "'- payment reversed", which is then what the export says happened.
+     */
+    public static function neutraliseWorkbookFormula(mixed $value): mixed
+    {
+        if (!is_string($value) || $value === '' || $value[0] !== '=') {
+            return $value;
+        }
+
+        return "'" . $value;
     }
 
     /**
@@ -396,6 +416,20 @@ class ExportService
         }
 
         $hours = config('activitylog-ui.exports.cleanup.after_hours', 24);
+
+        // A retention of zero means "delete anything at least zero seconds old",
+        // which includes the export written moments earlier — with queue.default
+        // set to sync, cleanup runs just after the file is created, so the job
+        // reported a completed export whose download 404s. There is no reading of
+        // that setting under which it does something useful.
+        if (!is_numeric($hours) || $hours <= 0) {
+            Log::warning('activitylog-ui.exports.cleanup.after_hours must be greater than zero; skipping cleanup.', [
+                'configured' => $hours,
+            ]);
+
+            return 0;
+        }
+
         $cutoff = now()->subHours($hours);
 
         $disk = $this->disk();
