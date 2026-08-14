@@ -17,7 +17,7 @@ class AnalyticsService
     {
         // Create cache key based on filters
         $filterHash = md5(serialize($filters));
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.dashboard_summary.' . $filterHash;
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.' . Activity::sourceFingerprint() . '.dashboard_summary.' . $filterHash;
         $cacheDuration = config('activitylog-ui.analytics.cache_duration', 3600);
 
         $cached = $this->readCachedArray($cacheKey, ['stats', 'event_types', 'total_activities']);
@@ -172,9 +172,8 @@ class AnalyticsService
         }
 
         if (!empty($filters['causer_id'])) {
-            // Casting to int here silently destroyed UUID and ULID causer keys.
-            $causerId = $filters['causer_id'];
-            $query->where('causer_id', is_numeric($causerId) ? (int) $causerId : $causerId);
+            // Bound as given; the controller already normalised the type.
+            $query->where('causer_id', $filters['causer_id']);
         }
 
         if (!empty($filters['subject_type'])) {
@@ -438,7 +437,7 @@ class AnalyticsService
      */
     public function getUserActivityProfile(int|string $userId, string $userType): array
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . ".user_profile.{$userType}.{$userId}";
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.' . Activity::sourceFingerprint() . ".user_profile.{$userType}.{$userId}";
 
         $cached = Cache::get($cacheKey);
 
@@ -537,7 +536,7 @@ class AnalyticsService
      */
     public function getActivityHeatmap(int $days = 365): array
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . ".heatmap.{$days}";
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.' . Activity::sourceFingerprint() . ".heatmap.{$days}";
 
         return Cache::remember($cacheKey, 3600, function () use ($days) {
             $startDate = now()->subDays($days)->startOfDay();

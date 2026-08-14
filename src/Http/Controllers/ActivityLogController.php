@@ -582,8 +582,10 @@ class ActivityLogController extends Controller
     {
         $value = $request->input($key, $default);
 
+        // The default is clamped too: a configured default_per_page above the cap
+        // otherwise slipped through whenever the request value was malformed.
         if (is_array($value) || !is_numeric($value)) {
-            return $default;
+            return (int) max($min, min($max, $default));
         }
 
         return (int) max($min, min($max, (int) $value));
@@ -649,10 +651,14 @@ class ActivityLogController extends Controller
 
             // Flat list of non-empty strings: a nested array reaches whereIn() and
             // becomes an unbindable parameter.
-            $filters['event_types'] = array_values(array_filter(
+            $filters['event_types'] = array_slice(array_values(array_filter(
                 array_map(fn ($type) => is_scalar($type) ? (string) $type : null, $types),
-                fn ($type) => $type !== null && $type !== ''
-            ));
+                fn ($type) => $type !== null && $type !== '' && mb_strlen($type) <= 191
+            )),
+                // Bounded: these become whereIn bindings, and a few thousand of
+                // them exceed what SQLite and others accept, failing the request
+                // before the export controller's own error handling.
+                0, 100);
         }
 
         foreach (['causer_id', 'subject_id'] as $key) {

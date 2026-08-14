@@ -54,8 +54,10 @@ class ActivitylogService
 
         // Causer filters
         if (!empty($filters['causer_type']) || !empty($filters['causer_id'])) {
+            // No re-casting here: sanitizeId() already chose int or string, and
+            // is_numeric() would turn a 26-digit ULID into PHP_INT_MAX.
             $causerId = isset($filters['causer_id']) && $filters['causer_id'] !== ''
-                ? (is_numeric($filters['causer_id']) ? (int) $filters['causer_id'] : $filters['causer_id'])
+                ? $filters['causer_id']
                 : null;
             $query->byCauser($filters['causer_type'] ?? null, $causerId);
         }
@@ -63,7 +65,7 @@ class ActivitylogService
         // Subject filters
         if (!empty($filters['subject_type']) || !empty($filters['subject_id'])) {
             $subjectId = isset($filters['subject_id']) && $filters['subject_id'] !== ''
-                ? (is_numeric($filters['subject_id']) ? (int) $filters['subject_id'] : $filters['subject_id'])
+                ? $filters['subject_id']
                 : null;
             $query->bySubject($filters['subject_type'] ?? null, $subjectId);
         }
@@ -146,11 +148,12 @@ class ActivitylogService
      * Version suffix for the filter-option cache keys.
      *
      * Bump this whenever the cached row shape OR its semantics change, so an
-     * upgrade cannot serve a payload written by an older release. v3: causers are
-     * deduplicated by type and id, so a v2 entry is still missing every causer
-     * that shared an id with another type.
+     * upgrade cannot serve a payload written by an older release. v3 deduplicated
+     * causers by type and id; v4 stopped letting an email reach the display name
+     * when filters.expose_causer_email is off, so a v3 entry can still be
+     * publishing addresses the flag is meant to withhold.
      */
-    protected const FILTER_CACHE_VERSION = 'v3';
+    protected const FILTER_CACHE_VERSION = 'v4';
 
     /**
      * Names of the filter-option caches, for invalidation.
@@ -233,9 +236,30 @@ class ActivitylogService
      */
     protected function filterCacheKey(string $name): string
     {
+        // Scoped to the source: the activity table and connection are resolved
+        // from the host's configured model, so pointing the UI somewhere else must
+        // not serve the previous table's causers and event types. Across tenants
+        // that is a disclosure, not merely stale data.
+        //
+        // Scoped to the display settings too, so toggling expose_causer_email or
+        // changing causer_name_attributes takes effect immediately rather than
+        // after the TTL — the causer list embeds the resolved display name.
         return config('activitylog-ui.performance.cache_prefix')
             . '.' . self::FILTER_CACHE_VERSION
+            . '.' . Activity::sourceFingerprint()
+            . '.' . $this->displayFingerprint()
             . '.' . $name;
+    }
+
+    /**
+     * Fingerprint of the settings that shape a cached causer's display name.
+     */
+    protected function displayFingerprint(): string
+    {
+        return substr(sha1(json_encode([
+            config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']),
+            (bool) config('activitylog-ui.filters.expose_causer_email', false),
+        ])), 0, 8);
     }
 
     /**

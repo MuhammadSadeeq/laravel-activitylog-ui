@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\MorphTypes;
 use MuhammadSadeeq\ActivitylogUi\Eloquent\SafeMorphTo;
+use Spatie\Activitylog\Contracts\Activity as ActivityContract;
 use Spatie\Activitylog\Models\Activity as SpatieActivity;
 
 class Activity extends SpatieActivity
@@ -31,82 +32,116 @@ class Activity extends SpatieActivity
      */
     protected static array $hasAttributeChangesColumn = [];
 
-    public function __construct(array $attributes = [])
-    {
-        parent::__construct($attributes);
-
-        // Spatie v5 dropped activitylog.table_name and database_connection, so a
-        // custom model registered as activitylog.activity_model is the only way
-        // left to move the log elsewhere. Read where it points and follow it —
-        // otherwise the UI reads activity_log while the application writes
-        // somewhere else entirely (issue #9).
-        if (($source = static::configuredActivitySource()) !== null) {
-            $this->setTable($source['table']);
-            $this->setConnection($source['connection']);
-        }
-    }
+    /**
+     * Guards against a configured model that extends this one re-entering
+     * resolution through its own constructor.
+     */
+    protected static bool $resolvingActivitySource = false;
 
     /**
-     * Table and connection declared by the host's configured activity model.
+     * Spatie v5 dropped activitylog.table_name and database_connection, so a
+     * custom model registered as activitylog.activity_model is the only way left
+     * to move the log elsewhere. Read where it points and follow it — otherwise
+     * the UI reads activity_log while the application writes somewhere else
+     * entirely (issue #9).
      *
-     * Memoised on the configured class name so a class swapped at runtime — or a
-     * long-lived worker that outlives a config change — produces a different key
-     * rather than a stale answer.
-     *
-     * @var array<string, array{table: string, connection: string|null}|null>
+     * Resolved here rather than in the constructor: these are called a handful of
+     * times per query instead of once per hydrated row, and resolving afresh
+     * means a model that derives its table from request or tenant context is
+     * followed rather than frozen at whatever it returned first.
      */
-    protected static array $activitySourceCache = [];
+    public function getTable()
+    {
+        return static::configuredActivitySource()['table'] ?? parent::getTable();
+    }
+
+    public function getConnectionName()
+    {
+        $source = static::configuredActivitySource();
+
+        return $source === null ? parent::getConnectionName() : $source['connection'];
+    }
 
     /**
      * @return array{table: string, connection: string|null}|null
      */
     protected static function configuredActivitySource(): ?array
     {
+        if (static::$resolvingActivitySource) {
+            return null;
+        }
+
         $class = config('activitylog.activity_model');
 
-        if (!is_string($class) || $class === '') {
+        if (!is_string($class) || $class === '' || $class === static::class) {
             return null;
         }
 
-        // Our own model, or anything extending it, would re-enter this
-        // constructor and recurse.
-        if (is_a($class, self::class, true)) {
-            return null;
-        }
-
-        if (array_key_exists($class, static::$activitySourceCache)) {
-            return static::$activitySourceCache[$class];
-        }
-
-        $source = null;
+        static::$resolvingActivitySource = true;
 
         try {
-            if (class_exists($class) && is_a($class, Model::class, true)) {
-                $instance = new $class;
+            if (!class_exists($class)) {
+                static::reportUnusableActivityModel($class, 'the class does not exist');
 
-                $source = [
-                    'table' => $instance->getTable(),
-                    'connection' => $instance->getConnectionName(),
-                ];
+                return null;
             }
-        } catch (\Throwable $e) {
-            // A broken custom model should not take the UI down; it just means
-            // falling back to the default table, which is worth saying out loud.
-            Log::warning('Activity log UI could not read the configured activity model; using the default table.', [
-                'activity_model' => $class,
-                'error' => $e->getMessage(),
-            ]);
-        }
 
-        return static::$activitySourceCache[$class] = $source;
+            // Spatie requires both, and so must this: accepting any Eloquent model
+            // would let a misconfiguration point the UI at, say, the users table
+            // and serialise password hashes into the activity list.
+            if (!is_a($class, Model::class, true) || !is_a($class, ActivityContract::class, true)) {
+                static::reportUnusableActivityModel($class, 'it is not an Eloquent model implementing Spatie\'s Activity contract');
+
+                return null;
+            }
+
+            $instance = new $class;
+
+            return [
+                'table' => $instance->getTable(),
+                'connection' => $instance->getConnectionName(),
+            ];
+        } catch (\Throwable $e) {
+            static::reportUnusableActivityModel($class, $e->getMessage());
+
+            return null;
+        } finally {
+            static::$resolvingActivitySource = false;
+        }
     }
 
     /**
-     * Forget the resolved source. Intended for tests and long-lived workers.
+     * Say plainly that a configured model was ignored; silently reading the
+     * default table would hide the misconfiguration entirely.
+     */
+    protected static function reportUnusableActivityModel(string $class, string $reason): void
+    {
+        Log::warning('Activity log UI is ignoring activitylog.activity_model and using the default table.', [
+            'activity_model' => $class,
+            'reason' => $reason,
+        ]);
+    }
+
+    /**
+     * A stable fingerprint of where activities are being read from.
+     *
+     * Cache keys derived from activity data include this, so pointing the UI at a
+     * different table or connection cannot serve the previous source's causers,
+     * counts or analytics — which across tenants would be a disclosure, not just
+     * a staleness bug.
+     */
+    public static function sourceFingerprint(): string
+    {
+        $model = new static();
+
+        return substr(sha1(($model->getConnectionName() ?? 'default') . '|' . $model->getTable()), 0, 12);
+    }
+
+    /**
+     * Forget resolved schema state. Intended for tests and long-lived workers.
      */
     public static function flushConfiguredActivitySource(): void
     {
-        static::$activitySourceCache = [];
         static::$hasAttributeChangesColumn = [];
     }
 
@@ -248,8 +283,8 @@ class Activity extends SpatieActivity
         }
 
         if ($causerId !== null && $causerId !== '') {
-            // Convert to integer if it's a numeric string
-            $causerId = is_numeric($causerId) ? (int) $causerId : $causerId;
+            // Bound as given. Casting numeric strings here overflowed long
+            // all-digit keys, such as a 26-character ULID, to PHP_INT_MAX.
             $query->where('causer_id', $causerId);
         }
 
@@ -266,8 +301,6 @@ class Activity extends SpatieActivity
         }
 
         if ($subjectId !== null && $subjectId !== '') {
-            // Convert to integer if it's a numeric string
-            $subjectId = is_numeric($subjectId) ? (int) $subjectId : $subjectId;
             $query->where('subject_id', $subjectId);
         }
 
