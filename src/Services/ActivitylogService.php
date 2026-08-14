@@ -2,6 +2,8 @@
 
 namespace MuhammadSadeeq\ActivitylogUi\Services;
 
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -178,14 +180,63 @@ class ActivitylogService
     protected function rememberFilterOptions(string $name, callable $compute): Collection
     {
         $key = $this->filterCacheKey($name);
+        $cached = $this->readFilterOptions($name, $key);
 
+        if ($cached !== null) {
+            return collect($cached);
+        }
+
+        // Single-flight from here. The causer list is a DISTINCT over the whole
+        // activity table with the causers eager-loaded behind it, so when the TTL
+        // expires under load every request in flight used to run that scan at
+        // once — the slower it is, the more of them pile onto it. One computes;
+        // the rest wait briefly and read what it wrote.
+        $lock = $this->cacheLock($key);
+
+        if ($lock === null) {
+            return collect($this->writeFilterOptions($key, $compute()));
+        }
+
+        try {
+            $lock->block(3);
+        } catch (\Throwable $e) {
+            // Whoever holds it is slower than the wait. Recomputing duplicates
+            // work, but it is bounded; making the request wait longer on someone
+            // else's query is not.
+            return collect($this->writeFilterOptions($key, $compute()));
+        }
+
+        try {
+            $cached = $this->readFilterOptions($name, $key);
+
+            if ($cached !== null) {
+                return collect($cached);
+            }
+
+            return collect($this->writeFilterOptions($key, $compute()));
+        } finally {
+            try {
+                $lock->release();
+            } catch (\Throwable $e) {
+                // Already gone if it outlived its own TTL; nothing to undo.
+            }
+        }
+    }
+
+    /**
+     * Read a filter-option cache, returning null when there is nothing usable.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    protected function readFilterOptions(string $name, string $key): ?array
+    {
         // Eviction is inside the guard too: a store that dies between the read and
         // the forget would otherwise throw straight out of the service.
         try {
             $cached = Cache::get($key);
 
             if ($this->isValidRows($name, $cached)) {
-                return collect($cached);
+                return $cached;
             }
 
             if ($cached !== null) {
@@ -195,15 +246,48 @@ class ActivitylogService
             $this->reportCacheFailure($key, 'read', $e);
         }
 
-        $rows = $compute();
+        return null;
+    }
 
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return array<int, array<string, mixed>>
+     */
+    protected function writeFilterOptions(string $key, array $rows): array
+    {
         try {
             Cache::put($key, $rows, config('activitylog-ui.performance.cache_ttl', 3600));
         } catch (\Throwable $e) {
             $this->reportCacheFailure($key, 'write', $e);
         }
 
-        return collect($rows);
+        return $rows;
+    }
+
+    /**
+     * A lock for the recompute of one cache key, or null when the configured
+     * store cannot provide one.
+     *
+     * Not every store is a lock provider — the null and array drivers among them
+     * — and a store that cannot lock must degrade to the previous behaviour
+     * rather than fail the request.
+     */
+    protected function cacheLock(string $key): ?Lock
+    {
+        try {
+            if (! Cache::getStore() instanceof LockProvider) {
+                return null;
+            }
+
+            // Long enough for the scan this guards, short enough that a worker
+            // killed mid-compute does not park every other request behind a lock
+            // nobody will ever release.
+            return Cache::lock($key . ':recompute', 30);
+        } catch (\Throwable $e) {
+            $this->reportCacheFailure($key, 'lock', $e);
+
+            return null;
+        }
     }
 
     /**
