@@ -353,6 +353,17 @@
                             ...this.defaultFilters(),
                             ...(view.filters || {}),
                         };
+
+                        // Bring the causer control in step with the restored filter,
+                        // or the dropdown keeps showing whoever was picked last —
+                        // or "All users" — while the results are filtered.
+                        this.selectedCauser = this.filters.causer_id
+                            ? (this.availableCausers.find(c =>
+                                  String(c.id) === String(this.filters.causer_id) &&
+                                  (!this.filters.causer_type || c.type === this.filters.causer_type)
+                              ) ?? null)
+                            : null;
+
                         this.applyFilters();
                         if (window.notify) {
                             window.notify.success('View Loaded', `Loaded "${view.name}" view`);
@@ -726,6 +737,14 @@
                 const contentType = response.headers.get('content-type') || '';
                 const preview = body.trim().slice(0, 240);
 
+                // An expired session answers every request with 401 JSON rather
+                // than a redirect, which otherwise surfaced as a generic "failed
+                // to load" and left the user staring at an empty dashboard.
+                if (response.status === 401 || response.status === 419) {
+                    window.ActivitylogUi.handleUnauthenticated();
+                    throw new Error(`${context} failed: your session has expired.`);
+                }
+
                 if (!response.ok) {
                     throw new Error(`${context} failed with HTTP ${response.status}${preview ? `: ${preview}` : ''}`);
                 }
@@ -739,6 +758,26 @@
                 } catch (error) {
                     throw new Error(`${context} returned invalid JSON${preview ? `: ${preview}` : ''}`);
                 }
+            },
+
+            // Guarded so that a page full of parallel requests all failing at once
+            // does not fire a reload per request.
+            _reauthenticating: false,
+
+            handleUnauthenticated() {
+                if (this._reauthenticating) {
+                    return;
+                }
+
+                this._reauthenticating = true;
+
+                if (window.notify) {
+                    window.notify.error('Session expired', 'Reloading so you can sign in again…');
+                }
+
+                // Reloading lets Laravel's auth middleware do the redirect, rather
+                // than this package guessing at the application's login route.
+                setTimeout(() => window.location.reload(), 1200);
             }
         };
 

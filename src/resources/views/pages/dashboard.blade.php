@@ -132,6 +132,8 @@ function activityDashboard() {
         // "nothing matched your filters", so a 500 looks like a successful search
         // once the error toast has faded.
         loadError: false,
+        // Page number of a reload that arrived while one was already running.
+        pendingReload: null,
         // Kept separate from `loading` so appending to the timeline does not
         // hide the list the user is currently scrolled into — x-show collapses
         // the document height, and the browser then clamps scrollTop to 0.
@@ -207,8 +209,11 @@ function activityDashboard() {
         },
 
         async loadActivities(page = 1) {
-            // Prevent multiple simultaneous calls
+            // A reload arriving while one is in flight used to be dropped outright,
+            // so changing a filter during a slow request left the rows showing the
+            // previous filter with nothing pending. Remember it and run it after.
             if (this.loading) {
+                this.pendingReload = page;
                 return;
             }
 
@@ -270,6 +275,14 @@ function activityDashboard() {
             } finally {
                 this.loading = false;
                 this.hasLoaded = true;
+
+                // Run the most recent superseded request, if any. Only the last
+                // one matters: earlier ones are already stale.
+                if (this.pendingReload !== null) {
+                    const next = this.pendingReload;
+                    this.pendingReload = null;
+                    this.loadActivities(next);
+                }
             }
         },
 
