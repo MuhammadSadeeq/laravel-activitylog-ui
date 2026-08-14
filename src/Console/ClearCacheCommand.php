@@ -10,12 +10,15 @@ class ClearCacheCommand extends Command
 {
     protected $signature = 'activitylog-ui:clear-cache';
 
-    protected $description = 'Clear the Activity Log UI filter and analytics caches';
+    protected $description = 'Clear the Activity Log UI filter option caches';
 
     /**
-     * Cache keys written before the payloads were versioned. Left behind by an
-     * upgrade, they are never read again but still occupy the store until their
-     * TTL expires, so clear them too.
+     * Filter-option keys from earlier versions. Left behind by an upgrade, they
+     * are never read again but still occupy the store until their TTL expires.
+     *
+     * Includes both the original unversioned names and the v2 names, since the
+     * causer list is now deduplicated by type and id and a v2 payload is still
+     * missing every causer that shared an id with another type.
      *
      * @var array<int, string>
      */
@@ -24,6 +27,10 @@ class ClearCacheCommand extends Command
         'subject_types',
         'event_types',
         'event_types_with_styling',
+        'v2.causers',
+        'v2.subject_types',
+        'v2.event_types',
+        'v2.event_types_with_styling',
     ];
 
     public function handle(ActivitylogService $activitylog): int
@@ -52,9 +59,9 @@ class ClearCacheCommand extends Command
         }
 
         // Analytics keys carry a filter hash or a user id, so they cannot be
-        // enumerated. They are versioned and validated on read, and expire on
-        // their own; say so rather than implying everything is gone.
-        $this->line('Analytics caches are keyed per filter set and expire on their own TTL.');
+        // enumerated and this command does not clear them. Said plainly rather
+        // than letting the command imply it cleared everything.
+        $this->line('Analytics caches are keyed per filter set and per user, so they are not cleared here; they expire on their own TTL.');
 
         return self::SUCCESS;
     }

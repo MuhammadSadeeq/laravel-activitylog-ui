@@ -638,7 +638,7 @@
                             All users
                         </button>
 
-                        <template x-for="causer in filteredCausers" :key="causer.id">
+                        <template x-for="causer in filteredCausers" :key="`${causer.type}#${causer.id}`">
                             <button @click="selectCauser(causer); open = false"
                                     class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
                                 <div class="flex flex-col">

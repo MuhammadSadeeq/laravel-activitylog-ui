@@ -145,10 +145,12 @@ class ActivitylogService
     /**
      * Version suffix for the filter-option cache keys.
      *
-     * Bump this whenever the cached row shape changes, so an upgrade cannot serve
-     * a payload written by an older release.
+     * Bump this whenever the cached row shape OR its semantics change, so an
+     * upgrade cannot serve a payload written by an older release. v3: causers are
+     * deduplicated by type and id, so a v2 entry is still missing every causer
+     * that shared an id with another type.
      */
-    protected const FILTER_CACHE_VERSION = 'v2';
+    protected const FILTER_CACHE_VERSION = 'v3';
 
     /**
      * Names of the filter-option caches, for invalidation.

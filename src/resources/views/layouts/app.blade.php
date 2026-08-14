@@ -388,7 +388,18 @@
                         if (savedCauserId) this.filters.causer_id = savedCauserId;
                         // Restored with the id, or a polymorphic causer filter loses
                         // its type and matches every model sharing that id.
-                        if (savedCauserType) this.filters.causer_type = savedCauserType;
+                        if (savedCauserType) {
+                            this.filters.causer_type = savedCauserType;
+                        } else if (savedCauserId && savedSelectedCauser) {
+                            // Storage written before causer_type was persisted still
+                            // holds the type on the selected-causer object; recover it
+                            // rather than silently widening the restored filter.
+                            try {
+                                this.filters.causer_type = JSON.parse(savedSelectedCauser)?.type ?? null;
+                            } catch (e) {
+                                this.filters.causer_type = null;
+                            }
+                        }
 
                         if (savedEventTypes) {
                             try {

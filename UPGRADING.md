@@ -79,18 +79,31 @@ as soon as the upgrade lands, so do this in the same deploy.
 |---|---|
 | `Spatie\Activitylog\Traits\LogsActivity` | `Spatie\Activitylog\Models\Concerns\LogsActivity` |
 | `Spatie\Activitylog\Traits\CausesActivity` | `Spatie\Activitylog\Models\Concerns\CausesActivity` |
-| `Spatie\Activitylog\Traits\HasActivity` | `Spatie\Activitylog\Models\Concerns\HasActivity` |
+| `Spatie\Activitylog\Traits\HasActivity` | `Spatie\Activitylog\Models\Concerns\HasActivity` (v5 reintroduces this trait; it did not exist in v4) |
+| `Spatie\Activitylog\LogOptions` | `Spatie\Activitylog\Support\LogOptions` |
+
+The `LogOptions` move matters as much as the traits: any model with a
+`getActivitylogOptions()` method imports it, and the old class is gone, so the
+first logged event fails.
 
 ```bash
-# Rewrite the imports across your app
-grep -rl 'Spatie\\Activitylog\\Traits' app/ \
-  | xargs sed -i '' 's|Spatie\\Activitylog\\Traits\\|Spatie\\Activitylog\\Models\\Concerns\\|g'
+# Rewrite the imports across your app. Uses perl rather than sed because the
+# in-place flag differs between GNU and BSD, and find -exec rather than a
+# grep/xargs pipeline so filenames containing spaces are handled.
+find app -name '*.php' -exec perl -pi -e '
+    s{Spatie\\Activitylog\\Traits\\}{Spatie\\Activitylog\\Models\\Concerns\\}g;
+    s{Spatie\\Activitylog\\LogOptions}{Spatie\\Activitylog\\Support\\LogOptions}g;
+' {} +
+
+# Check nothing was missed
+grep -rn 'Activitylog\\Traits\|Activitylog\\LogOptions' app/ || echo "all imports updated"
 ```
 
-The relations were renamed too: `$model->activities` is now
-`$model->activitiesAsSubject`, and `$model->actions` is now
-`$model->activitiesAsCauser`. `getActivitylogOptions()` is optional in v5. See
-Spatie's own upgrade guide for the complete rename table.
+Some relations were renamed too: `$model->activities` becomes
+`$model->activitiesAsSubject` and `$model->actions` becomes
+`$model->activitiesAsCauser`. (The `HasActivity` trait keeps `activities()` as an
+alias, so models using that trait are unaffected.) `getActivitylogOptions()` is
+optional in v5. See Spatie's own upgrade guide for the complete rename table.
 
 ## Step 2: Update this package
 

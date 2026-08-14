@@ -1,6 +1,7 @@
 <!-- Analytics Dashboard Component -->
+{{-- No x-init="init()": Alpine.data() already runs init() automatically, and
+     calling it here as well registered every watcher and listener twice. --}}
 <div x-data="analyticsData()"
-     x-init="init()"
      class="space-y-6">
 
     <!-- Analytics Header -->
@@ -342,8 +343,12 @@ document.addEventListener('alpine:init', () => {
                 let params = new URLSearchParams();
 
                 // Filter-panel selections first, so analytics reflects the same
-                // slice of the log as the table and timeline.
+                // slice of the log as the table and timeline. Dates are excluded:
+                // this component has its own period control, and the endpoint
+                // ignores `period` whenever start_date/end_date are present, so
+                // forwarding them silently made the period pills inert.
                 Object.entries(this.dashboardFilters || {}).forEach(([key, value]) => {
+                    if (key === 'start_date' || key === 'end_date' || key === 'date_preset') return;
                     if (value === null || value === undefined || value === '') return;
                     if (Array.isArray(value)) {
                         value.forEach(item => params.append(`${key}[]`, item));
@@ -389,6 +394,10 @@ document.addEventListener('alpine:init', () => {
                     if (this.activityTrends && document.getElementById('activityTrendsChart')) {
                         this.initActivityTrendsChart();
                     }
+
+                    // Only a success counts as loaded, so returning to the view
+                    // after a transient failure retries instead of staying blank.
+                    this.hasLoaded = true;
                 }
             } catch (error) {
                 console.error('Error loading analytics:', error);
@@ -397,7 +406,6 @@ document.addEventListener('alpine:init', () => {
                 }
             } finally {
                 this.loading = false;
-                this.hasLoaded = true;
             }
         },
 

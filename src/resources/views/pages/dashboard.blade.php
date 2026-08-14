@@ -443,8 +443,8 @@ function activityDashboard() {
                 // they never chose. Table paging needs its own state to do better.
                 this.loadActivities();
             } else if (view === 'analytics') {
-                // Analytics doesn't use pagination
-                this.reloadAnalytics();
+                // Nothing to do: analytics has no pagination, and the component
+                // watches currentView to load itself the first time it is shown.
             }
         },
 
