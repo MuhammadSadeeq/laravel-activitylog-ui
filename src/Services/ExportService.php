@@ -320,12 +320,57 @@ class ExportService
     }
 
     /**
+     * The default export directory, used when the configured one is unusable.
+     */
+    public const DEFAULT_PATH = 'exports/activity-logs';
+
+    /**
+     * Guard so the misconfiguration below is logged once per process rather than
+     * once per export.
+     */
+    protected static bool $reportedPathFallback = false;
+
+    /**
+     * The directory exports live in, as a disk-relative path with no surrounding
+     * slashes.
+     *
+     * The writer took config('exports.path') verbatim while the download endpoint
+     * compared against a trimmed copy, so a perfectly reasonable value like
+     * '/exports/logs/' wrote to '/exports/logs//file.csv' and then rejected every
+     * download of it as being outside the export directory.
+     */
+    public function exportDirectory(): string
+    {
+        $configured = config('activitylog-ui.exports.path', self::DEFAULT_PATH);
+        $path = is_string($configured) ? trim(str_replace('\\', '/', $configured), '/') : '';
+
+        // An empty value, '/' or '.' all resolve to the root of the disk. That
+        // would put exports beside the rest of the disk's contents and, because
+        // the download endpoint's only containment check is "inside the export
+        // directory", turn that endpoint into a reader for every file on the
+        // disk. Treated as unconfigured rather than as an instruction.
+        if ($path === '' || $path === '.') {
+            if (! static::$reportedPathFallback) {
+                static::$reportedPathFallback = true;
+
+                Log::warning('activitylog-ui.exports.path resolves to the root of the disk; using the default directory instead.', [
+                    'configured' => $configured,
+                    'using' => self::DEFAULT_PATH,
+                ]);
+            }
+
+            return self::DEFAULT_PATH;
+        }
+
+        return $path;
+    }
+
+    /**
      * Get full export path.
      */
     protected function getExportPath(string $filename): string
     {
-        $basePath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        return "{$basePath}/{$filename}";
+        return $this->exportDirectory() . '/' . $filename;
     }
 
     /**
@@ -353,16 +398,27 @@ class ExportService
         $hours = config('activitylog-ui.exports.cleanup.after_hours', 24);
         $cutoff = now()->subHours($hours);
 
-        $basePath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        $files = $this->disk()->files($basePath);
+        $disk = $this->disk();
+
+        // files() rather than allFiles(): exports are written flat into this one
+        // directory, and recursing would delete whatever else the host keeps
+        // below it.
+        $files = $disk->files($this->exportDirectory());
 
         $deletedCount = 0;
 
         foreach ($files as $file) {
-            $lastModified = $this->disk()->lastModified($file);
+            // One metadata call per file, which on a remote disk is one request
+            // per file. A file that disappeared under us — a concurrent cleanup,
+            // or another worker — must not abort the sweep.
+            try {
+                $lastModified = $disk->lastModified($file);
+            } catch (\Throwable $e) {
+                continue;
+            }
 
             if ($lastModified < $cutoff->timestamp) {
-                $this->disk()->delete($file);
+                $disk->delete($file);
                 $deletedCount++;
             }
         }
@@ -464,11 +520,6 @@ class ExportService
     {
         $jobId = uniqid('export_');
 
-        // Auto-cleanup old files if enabled
-        if (config('activitylog-ui.exports.cleanup.auto_run', true)) {
-            $this->cleanupOldExports();
-        }
-
         try {
             // Create initial job status
             $initialStatus = [
@@ -515,6 +566,19 @@ class ExportService
             'filters' => $filters,
             'user_id' => $userId
         ]);
+
+        // Housekeeping, so it runs after the work the caller is waiting on. It
+        // used to precede the dispatch, holding the request open for a metadata
+        // call per existing export — a round trip each on a remote disk — and a
+        // failure there threw before anything was queued, so an unreachable
+        // storage backend meant no exports at all rather than no cleanup.
+        if (config('activitylog-ui.exports.cleanup.auto_run', true)) {
+            try {
+                $this->cleanupOldExports();
+            } catch (\Throwable $e) {
+                \Log::warning('Export cleanup failed', ['error' => $e->getMessage()]);
+            }
+        }
 
         return $jobId;
     }

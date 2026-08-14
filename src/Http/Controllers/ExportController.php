@@ -141,10 +141,28 @@ class ExportController extends Controller
         // "exports/activity-logs/../../../.env": Flysystem rejects traversal in
         // practice, but relying on that leaves the guard here saying something it
         // does not enforce.
-        $exportPath = trim((string) config('activitylog-ui.exports.path', 'exports/activity-logs'), '/');
+        //
+        // The directory comes from the service so the two agree: they each used to
+        // normalise the configured value differently, and a trailing slash was
+        // enough to make every download of a successfully written file 403.
+        $exportPath = $this->exportService->exportDirectory();
         $normalized = ltrim(str_replace('\\', '/', $path), '/');
 
-        if (str_contains($normalized, '..') || !str_starts_with($normalized, $exportPath . '/')) {
+        if (!str_starts_with($normalized, $exportPath . '/')) {
+            abort(403, 'Invalid file path.');
+        }
+
+        // Segment-wise, so '..' is rejected as a path component rather than as a
+        // substring — a legitimately named file may contain dots.
+        $segments = explode('/', $normalized);
+
+        if (in_array('..', $segments, true) || in_array('.', $segments, true) || in_array('', $segments, true)) {
+            abort(403, 'Invalid file path.');
+        }
+
+        // Exports are only ever written in these formats. Anything else under the
+        // directory belongs to the host, and this endpoint is not a file browser.
+        if (!in_array(strtolower(pathinfo($normalized, PATHINFO_EXTENSION)), ['csv', 'xlsx', 'pdf', 'json'], true)) {
             abort(403, 'Invalid file path.');
         }
 

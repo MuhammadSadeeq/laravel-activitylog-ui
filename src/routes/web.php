@@ -17,32 +17,19 @@ $middleware = $config['middleware'] ?? ['web'];
 // and the access lists entirely, and served the whole audit log publicly.
 // The fallback is true so a missing or partial config fails closed; the
 // controllers already assumed true here while this file assumed false.
-$accessMiddleware = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
-
-if (config('activitylog-ui.authorization.enabled', true)) {
-    if (!in_array('auth', $middleware, true)) {
-        $middleware[] = 'auth';
-    }
-
-    if (!in_array($accessMiddleware, $middleware, true)) {
-        $middleware[] = $accessMiddleware;
-    }
-} elseif (config('activitylog-ui.access.allowed_users') || config('activitylog-ui.access.allowed_roles')) {
-    // The middleware enforces these lists even with authorization disabled, but
-    // it was only ever registered when authorization was enabled — so anyone who
-    // set them while leaving authorization off got no protection at all.
-    //
-    // 'auth' comes too: an allow-list requires a logged-in user either way, and
-    // without it a guest got a bare 401 with no route to signing in — so the
-    // frontend's session-expiry reload landed on an error page rather than a
-    // login form.
-    if (!in_array('auth', $middleware, true)) {
-        $middleware[] = 'auth';
-    }
-
-    if (!in_array($accessMiddleware, $middleware, true)) {
-        $middleware[] = $accessMiddleware;
-    }
+//
+// The second branch covers allow-lists configured while authorization is off:
+// the middleware enforces those lists either way, but it was only ever
+// registered when authorization was enabled, so anyone who set them without
+// enabling authorization got no protection at all. Authentication comes with
+// it — an allow-list needs a logged-in user, and without it a guest got a bare
+// 401 with no route to signing in.
+if (
+    config('activitylog-ui.authorization.enabled', true)
+    || config('activitylog-ui.access.allowed_users')
+    || config('activitylog-ui.access.allowed_roles')
+) {
+    $middleware = \MuhammadSadeeq\ActivitylogUi\Support\RouteMiddleware::protect($middleware);
 }
 
 $domain = $config['domain'] ?? null;
