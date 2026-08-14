@@ -230,7 +230,56 @@
                                 color: `bg-${window.ActivityTypeStyler.getColor(eventType)}-500`,
                                 styling: window.ActivityTypeStyler.getEventTypeStyling(eventType)
                             }));
+                        } finally {
+                            // The restored causer_id was applied before this request
+                            // finished, so the label it should carry only becomes
+                            // knowable here.
+                            this.resolveSelectedCauser();
                         }
+                    },
+
+                    /**
+                     * Bring the causer control in step with filters.causer_id.
+                     *
+                     * The selection is restored from localStorage, and a saved view
+                     * may be loaded, before the causer list has arrived — and the
+                     * stored copy is a snapshot that can name someone who has since
+                     * been renamed or deleted. Resolving against the loaded list
+                     * keeps the label truthful; the fallback matters just as much,
+                     * because leaving it null showed "All users" over a filtered
+                     * result set, which reads as a broken filter rather than as a
+                     * causer the dropdown cannot name.
+                     */
+                    resolveSelectedCauser() {
+                        if (!this.filters.causer_id) {
+                            this.selectedCauser = null;
+                            return;
+                        }
+
+                        const match = this.availableCausers.find(c =>
+                            String(c.id) === String(this.filters.causer_id) &&
+                            (!this.filters.causer_type || c.type === this.filters.causer_type)
+                        );
+
+                        if (match) {
+                            this.selectedCauser = match;
+                            return;
+                        }
+
+                        // Nothing to match against — a failed options request, or a
+                        // causer no longer in the list. Name it from the filter
+                        // itself rather than claiming no filter is set.
+                        const type = this.filters.causer_type
+                            ? String(this.filters.causer_type).split('\\').pop()
+                            : 'Causer';
+
+                        this.selectedCauser = {
+                            id: this.filters.causer_id,
+                            type: this.filters.causer_type,
+                            name: `${type} #${this.filters.causer_id}`,
+                            email: null,
+                            label: `${type} #${this.filters.causer_id}`,
+                        };
                     },
 
                     searchCausers() {
@@ -357,12 +406,7 @@
                         // Bring the causer control in step with the restored filter,
                         // or the dropdown keeps showing whoever was picked last —
                         // or "All users" — while the results are filtered.
-                        this.selectedCauser = this.filters.causer_id
-                            ? (this.availableCausers.find(c =>
-                                  String(c.id) === String(this.filters.causer_id) &&
-                                  (!this.filters.causer_type || c.type === this.filters.causer_type)
-                              ) ?? null)
-                            : null;
+                        this.resolveSelectedCauser();
 
                         this.applyFilters();
                         if (window.notify) {
@@ -810,16 +854,134 @@
                         window.notify.success('Export Complete', `Activities exported as ${format.toUpperCase()} file`);
                     }
                 } else if (result.job_id) {
-                    // Background job - poll for completion
                     if (window.notify) {
-                        window.notify.info('Processing', 'Large export is being processed. You will be notified when ready.');
+                        window.notify.info('Processing', 'This export is large enough to run in the background. Keep this page open and the download will appear here.');
                     }
+
+                    window.pollExportProgress(result.job_id, format);
                 }
             } catch (error) {
                 console.error('Export error:', error);
                 if (window.notify) {
                     window.notify.error('Export Failed', 'Failed to export activities. Please try again.');
                 }
+            }
+        };
+
+        // Job ids currently being polled, so a second click on the same export
+        // does not start a second poll loop against it.
+        window.exportProgressPolls = new Set();
+
+        /**
+         * Follow a queued export to completion.
+         *
+         * The job has always written its progress to a cache the API exposes, but
+         * nothing ever read it: a queued export told the user it was "processing"
+         * and then went quiet forever, leaving the finished file reachable only by
+         * an email that is off by default — and unmentioned when it fails to send.
+         */
+        window.pollExportProgress = async function (jobId, format) {
+            if (window.exportProgressPolls.has(jobId)) {
+                return;
+            }
+
+            window.exportProgressPolls.add(jobId);
+
+            const endpoint = '{{ route("activitylog-ui.api.export.progress") }}';
+            // Comfortably past the default job timeout (300s) times its retries,
+            // so a slow-but-healthy export is not abandoned early.
+            const deadline = Date.now() + (20 * 60 * 1000);
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+            let delay = 2000;
+            let consecutiveErrors = 0;
+            let consecutiveMissing = 0;
+
+            try {
+                while (Date.now() < deadline) {
+                    await sleep(delay);
+                    // Backs off so a long export is not polled every two seconds
+                    // for twenty minutes.
+                    delay = Math.min(Math.round(delay * 1.4), 15000);
+
+                    let status;
+
+                    try {
+                        const response = await fetch(`${endpoint}?job_id=${encodeURIComponent(jobId)}`, {
+                            headers: {
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                            }
+                        });
+
+                        const result = await window.ActivitylogUi.parseJsonResponse(response, 'Checking export progress');
+                        status = result.data || {};
+                        consecutiveErrors = 0;
+                    } catch (error) {
+                        console.error('Export progress check failed:', error);
+
+                        // A blip should not abandon an export that is still running;
+                        // a persistent failure means nothing useful is coming.
+                        if (++consecutiveErrors >= 3) {
+                            if (window.notify) {
+                                window.notify.warning('Export status unavailable', 'We stopped checking on this export. Reload the page to see whether it finished.');
+                            }
+                            return;
+                        }
+
+                        continue;
+                    }
+
+                    if (status.status === 'completed') {
+                        if (window.notify) {
+                            window.notify.success(
+                                'Export ready',
+                                `Your ${String(format).toUpperCase()} export has finished.`,
+                                {
+                                    link: status.download_url ? { href: status.download_url, label: 'Download' } : null,
+                                    timeout: 0
+                                }
+                            );
+
+                            // Recorded by the job when the completion email could not
+                            // be sent. Saying so matters: the user was told to expect
+                            // one, and the file itself is fine.
+                            if (status.notification === 'failed') {
+                                window.notify.warning('Email not sent', status.notification_error || 'The export is ready to download, but we could not email you about it.', { timeout: 0 });
+                            }
+                        }
+
+                        return;
+                    }
+
+                    if (status.status === 'failed') {
+                        if (window.notify) {
+                            window.notify.error('Export failed', status.message || 'The export could not be completed.', { timeout: 0 });
+                        }
+
+                        return;
+                    }
+
+                    // The status is written before the job is dispatched and kept for
+                    // 24 hours, so this means the cache dropped it — the export may
+                    // well still be running, but its progress is no longer knowable.
+                    if (status.status === 'not_found') {
+                        if (++consecutiveMissing >= 3) {
+                            if (window.notify) {
+                                window.notify.warning('Export status unavailable', 'We lost track of this export. If it completes you will still receive the email, if notifications are enabled.');
+                            }
+                            return;
+                        }
+                    } else {
+                        consecutiveMissing = 0;
+                    }
+                }
+
+                if (window.notify) {
+                    window.notify.warning('Still exporting', 'This export is taking longer than expected. Reload the page later to check on it.');
+                }
+            } finally {
+                window.exportProgressPolls.delete(jobId);
             }
         };
 
@@ -1047,6 +1209,11 @@
                                 <div class="ml-3 w-0 flex-1 pt-0.5">
                                     <p class="text-sm font-medium text-gray-900 dark:text-white" x-text="notification.title"></p>
                                     <p class="mt-1 text-sm text-gray-500 dark:text-gray-400" x-text="notification.message"></p>
+                                    <a x-show="notification.link"
+                                       :href="notification.link?.href"
+                                       @click="remove(notification.id)"
+                                       class="mt-2 inline-flex items-center text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 focus:outline-none focus:underline"
+                                       x-text="notification.link?.label"></a>
                                 </div>
                             </div>
                         </div>
@@ -1074,41 +1241,63 @@
                 notifications: [],
 
                 init() {
-                    // Make notification system globally available
+                    // Make notification system globally available. The options
+                    // argument is optional throughout, so existing two- and
+                    // three-argument calls are unaffected.
                     window.notify = {
-                        success: (title, message) => this.add('success', title, message),
-                        error: (title, message) => this.add('error', title, message),
-                        warning: (title, message) => this.add('warning', title, message),
-                        info: (title, message) => this.add('info', title, message)
+                        success: (title, message, options) => this.add('success', title, message, options),
+                        error: (title, message, options) => this.add('error', title, message, options),
+                        warning: (title, message, options) => this.add('warning', title, message, options),
+                        info: (title, message, options) => this.add('info', title, message, options)
                     };
                 },
 
-                add(type, title, message) {
+                /**
+                 * @param options.link    {href, label} rendered as a link in the body
+                 * @param options.timeout ms before auto-dismissal; 0 keeps it until dismissed
+                 */
+                add(type, title, message, options = {}) {
                     const id = Date.now() + Math.random();
-                    const notification = {
+
+                    this.notifications.push({
                         id,
                         type,
                         title,
                         message,
+                        link: options.link || null,
                         show: true
-                    };
+                    });
 
-                    this.notifications.push(notification);
+                    // A finished background export is the one thing here worth
+                    // interrupting for, and its notification carries the only link
+                    // to the file — so it stays until dismissed rather than
+                    // vanishing after five seconds while the user is elsewhere.
+                    const timeout = options.timeout === undefined ? 5000 : options.timeout;
 
-                    // Auto remove after 5 seconds
-                    setTimeout(() => {
-                        this.remove(id);
-                    }, 5000);
+                    if (timeout > 0) {
+                        setTimeout(() => this.remove(id), timeout);
+                    }
                 },
 
                 remove(id) {
-                    const index = this.notifications.findIndex(n => n.id === id);
-                    if (index > -1) {
-                        this.notifications[index].show = false;
-                        setTimeout(() => {
-                            this.notifications.splice(index, 1);
-                        }, 300);
+                    const notification = this.notifications.find(n => n.id === id);
+
+                    if (!notification) {
+                        return;
                     }
+
+                    notification.show = false;
+
+                    // Looked up again after the transition: the index captured now
+                    // is stale if anything else was dismissed in between, and
+                    // splicing it removed a notification the user was still reading.
+                    setTimeout(() => {
+                        const index = this.notifications.findIndex(n => n.id === id);
+
+                        if (index > -1) {
+                            this.notifications.splice(index, 1);
+                        }
+                    }, 300);
                 }
             }
         }
