@@ -152,35 +152,34 @@ class AnalyticsService
 
     /**
      * Apply filters to a query builder.
+     *
+     * Delegates to the list's own filtering rather than keeping a reduced copy.
+     * The copy ignored causer_type, subject_id and property_key, and searched
+     * only `description`, so picking one causer counted another's activities and
+     * searching an email found rows in the table but nothing in analytics.
      */
     protected function applyFilters($query, array $filters = [])
     {
-        if (!empty($filters['search'])) {
-            $query->where('description', 'like', '%' . $filters['search'] . '%');
-        }
+        return app(ActivitylogService::class)->applyFilters($query, $filters);
+    }
 
-        if (!empty($filters['start_date'])) {
-            $query->whereDate('created_at', '>=', $filters['start_date']);
-        }
-
-        if (!empty($filters['end_date'])) {
-            $query->whereDate('created_at', '<=', $filters['end_date']);
-        }
-
-        if (!empty($filters['event_types']) && is_array($filters['event_types'])) {
-            $query->whereIn('event', $filters['event_types']);
-        }
-
-        if (!empty($filters['causer_id'])) {
-            // Bound as given; the controller already normalised the type.
-            $query->where('causer_id', $filters['causer_id']);
-        }
-
-        if (!empty($filters['subject_type'])) {
-            $query->where('subject_type', $filters['subject_type']);
-        }
-
-        return $query;
+    /**
+     * Merge an explicit date window over the caller's filters.
+     *
+     * date_preset takes precedence over start_date/end_date in the shared filter
+     * logic, so a preset left in place would override the very window these
+     * counts are asking for.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    protected function withDateWindow(array $filters, string $start, string $end): array
+    {
+        return array_merge($filters, [
+            'date_preset' => null,
+            'start_date' => $start,
+            'end_date' => $end,
+        ]);
     }
 
     /**
@@ -199,10 +198,7 @@ class AnalyticsService
     protected function getActivitiesToday(array $filters = []): int
     {
         $query = Activity::query();
-        $this->applyFilters($query, array_merge($filters, [
-            'start_date' => now()->startOfDay()->toDateString(),
-            'end_date' => now()->endOfDay()->toDateString(),
-        ]));
+        $this->applyFilters($query, $this->withDateWindow($filters, now()->startOfDay()->toDateString(), now()->endOfDay()->toDateString()));
         return $query->count();
     }
 
@@ -212,10 +208,7 @@ class AnalyticsService
     protected function getActivitiesThisWeek(array $filters = []): int
     {
         $query = Activity::query();
-        $this->applyFilters($query, array_merge($filters, [
-            'start_date' => now()->startOfWeek()->toDateString(),
-            'end_date' => now()->endOfWeek()->toDateString(),
-        ]));
+        $this->applyFilters($query, $this->withDateWindow($filters, now()->startOfWeek()->toDateString(), now()->endOfWeek()->toDateString()));
         return $query->count();
     }
 
@@ -225,10 +218,7 @@ class AnalyticsService
     protected function getActivitiesThisMonth(array $filters = []): int
     {
         $query = Activity::query();
-        $this->applyFilters($query, array_merge($filters, [
-            'start_date' => now()->startOfMonth()->toDateString(),
-            'end_date' => now()->endOfMonth()->toDateString(),
-        ]));
+        $this->applyFilters($query, $this->withDateWindow($filters, now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString()));
         return $query->count();
     }
 
