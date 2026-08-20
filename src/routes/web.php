@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use MuhammadSadeeq\ActivitylogUi\Http\Controllers\ActivityLogController;
+use MuhammadSadeeq\ActivitylogUi\Http\Controllers\AssetController;
 use MuhammadSadeeq\ActivitylogUi\Http\Controllers\ExportController;
 
 $config = config('activitylog-ui.route', []);
@@ -33,6 +34,13 @@ if (
 }
 
 $domain = $config['domain'] ?? null;
+
+// Outside the protected group on purpose. A guest is redirected to the host's
+// login page, and a stylesheet that 401s would leave that page unstyled — and
+// it is a stylesheet, so there is nothing to protect.
+Route::get($prefix . '/assets/activitylog-ui.css', [AssetController::class, 'stylesheet'])
+    ->name($name . 'assets.css')
+    ->domain($domain);
 
 Route::group([
     'prefix' => $prefix,

@@ -175,9 +175,10 @@ class ActivitylogService
      * upgrade cannot serve a payload written by an older release. v3 deduplicated
      * causers by type and id; v4 stopped letting an email reach the display name
      * when filters.expose_causer_email is off, so a v3 entry can still be
-     * publishing addresses the flag is meant to withhold.
+     * publishing addresses the flag is meant to withhold. v5 dropped the
+     * generated Tailwind class strings from the event types.
      */
-    protected const FILTER_CACHE_VERSION = 'v4';
+    protected const FILTER_CACHE_VERSION = 'v5';
 
     /**
      * Names of the filter-option caches, for invalidation.
@@ -393,7 +394,7 @@ class ActivitylogService
         'causers' => ['id', 'type', 'name', 'label'],
         'subject_types' => ['value', 'label', 'full_name'],
         'event_types' => ['value', 'label'],
-        'event_types_with_styling' => ['value', 'label', 'colors', 'gradient', 'icon', 'badge_classes', 'timeline_classes'],
+        'event_types_with_styling' => ['value', 'label', 'icon'],
     ];
 
     /**
@@ -587,106 +588,20 @@ class ActivitylogService
                 ->pluck('event')
                 ->values();
 
-            return $eventTypes->map(function ($event, $index) {
-                $styling = $this->generateEventTypeStyling($event, $index);
-
+            // The colour, gradient and badge/timeline class strings that used
+            // to be here described Tailwind utilities for a stylesheet the
+            // package no longer ships, and they were the bulk of this payload —
+            // roughly 500 bytes per event type, sent on every dashboard load and
+            // used by nothing. The interface derives an event's appearance from
+            // its name; what the server has to say is the name itself.
+            return $eventTypes->map(function ($event) {
                 return [
                     'value' => $event,
-                    'label' => ucfirst($event),
-                    'colors' => $styling['colors'],
-                    'gradient' => $styling['gradient'],
-                    'icon' => $styling['icon'],
-                    'badge_classes' => $styling['badge_classes'],
-                    'timeline_classes' => $styling['timeline_classes'],
+                    'label' => ucfirst(str_replace('_', ' ', $event)),
+                    'icon' => $this->selectIconForEventType($event),
                 ];
             })->all();
         });
-    }
-
-    /**
-     * Generate consistent styling for an activity type.
-     */
-    protected function generateEventTypeStyling(string $eventType, int $index): array
-    {
-        // Get predefined colors from config first
-        $configColors = config('activitylog-ui.analytics.chart_colors', []);
-
-        if (isset($configColors[$eventType])) {
-            // Use configured color if available
-            $baseColor = $this->getColorName($configColors[$eventType]);
-        } else {
-            // Generate color based on event type characteristics
-            $baseColor = $this->selectColorForEventType($eventType, $index);
-        }
-
-        return [
-            'colors' => [
-                'primary' => $baseColor,
-                'light' => $this->getColorShade($baseColor, 100),
-                'medium' => $this->getColorShade($baseColor, 500),
-                'dark' => $this->getColorShade($baseColor, 800),
-            ],
-            'gradient' => [
-                'from' => $this->getColorShade($baseColor, 500),
-                'to' => $this->getColorShade($baseColor, 600),
-                'dark_from' => $this->getColorShade($baseColor, 400),
-                'dark_to' => $this->getColorShade($baseColor, 500),
-            ],
-            'icon' => $this->selectIconForEventType($eventType),
-            'badge_classes' => $this->generateBadgeClasses($baseColor),
-            'timeline_classes' => $this->generateTimelineClasses($baseColor),
-        ];
-    }
-
-    /**
-     * Select appropriate color for event type based on semantic meaning.
-     */
-    protected function selectColorForEventType(string $eventType, int $fallbackIndex): string
-    {
-        // Semantic color mapping for common event types
-        $semanticColors = [
-            'created' => 'green',
-            'updated' => 'blue',
-            'deleted' => 'red',
-            'restored' => 'yellow',
-            'login' => 'purple',
-            'logout' => 'indigo',
-            'system' => 'pink',
-            'error' => 'red',
-            'warning' => 'amber',
-            'info' => 'blue',
-            'success' => 'green',
-            'failed' => 'red',
-            'completed' => 'green',
-            'started' => 'blue',
-            'cancelled' => 'gray',
-            'pending' => 'yellow',
-            'approved' => 'green',
-            'rejected' => 'red',
-            'published' => 'green',
-            'drafted' => 'gray',
-            'archived' => 'slate',
-        ];
-
-        // Check for exact match first
-        if (isset($semanticColors[$eventType])) {
-            return $semanticColors[$eventType];
-        }
-
-        // Check for partial matches (e.g., "user_login" contains "login")
-        foreach ($semanticColors as $keyword => $color) {
-            if (str_contains($eventType, $keyword)) {
-                return $color;
-            }
-        }
-
-        // Fallback to a color palette rotation
-        $colorPalette = [
-            'blue', 'green', 'purple', 'pink', 'indigo', 'cyan',
-            'teal', 'emerald', 'lime', 'amber', 'orange', 'rose'
-        ];
-
-        return $colorPalette[$fallbackIndex % count($colorPalette)];
     }
 
     /**
@@ -718,48 +633,6 @@ class ActivitylogService
 
         // Default icon
         return 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z';
-    }
-
-    /**
-     * Convert hex color to color name (simplified mapping).
-     */
-    protected function getColorName(string $hexColor): string
-    {
-        $colorMap = [
-            '#10b981' => 'green',
-            '#3b82f6' => 'blue',
-            '#ef4444' => 'red',
-            '#f59e0b' => 'yellow',
-            '#8b5cf6' => 'purple',
-            '#6366f1' => 'indigo',
-            '#ec4899' => 'pink',
-        ];
-
-        return $colorMap[$hexColor] ?? 'gray';
-    }
-
-    /**
-     * Get color shade for Tailwind classes.
-     */
-    protected function getColorShade(string $color, int $shade): string
-    {
-        return "{$color}-{$shade}";
-    }
-
-    /**
-     * Generate badge classes for an activity type.
-     */
-    protected function generateBadgeClasses(string $color): string
-    {
-        return "bg-{$color}-100 dark:bg-{$color}-900/30 text-{$color}-800 dark:text-{$color}-300 border-{$color}-200 dark:border-{$color}-800";
-    }
-
-    /**
-     * Generate timeline classes for an activity type.
-     */
-    protected function generateTimelineClasses(string $color): string
-    {
-        return "bg-gradient-to-br from-{$color}-500 to-{$color}-600 dark:from-{$color}-400 dark:to-{$color}-500";
     }
 
     /**
