@@ -1,12 +1,8 @@
 <div class="al-card">
     <div class="al-card__header">
-        <div class="al-grow">
+        <div class="al-grow al-row" style="gap:.5rem">
             <h3 class="al-card__title">Activities</h3>
-            <p class="al-card__meta">
-                <span x-text="totalActivities.toLocaleString()"></span>
-                <span x-text="totalActivities === 1 ? 'record' : 'records'"></span>
-                <template x-if="hasActiveFilters"><span> · filtered</span></template>
-            </p>
+            <span class="al-chip" x-show="hasActiveFilters" x-cloak>filtered</span>
         </div>
 
         <div class="al-row">
@@ -29,70 +25,83 @@
          on a phone however far you scroll. --}}
     <div class="al-table-wrap al-scroll" x-show="!loadError && activities.length > 0" x-cloak>
         <table class="al-table">
+            {{-- Four columns, not six. Subject had been repeating whatever the
+                 description column fell back to, and a per-row button column
+                 held nothing but the same word over and over. --}}
+            <colgroup>
+                <col class="al-col-event">
+                <col class="al-col-record">
+                <col>
+                <col class="al-col-time">
+            </colgroup>
             <thead>
                 <tr>
                     <th scope="col">Event</th>
-                    <th scope="col">Description</th>
-                    <th scope="col">Subject</th>
+                    <th scope="col">Record</th>
                     <th scope="col">User</th>
-                    <th scope="col">When</th>
-                    <th scope="col"><span class="al-visually-hidden">Actions</span></th>
+                    <th scope="col" class="al-table__num">Time</th>
                 </tr>
             </thead>
-            <tbody>
-                <template x-for="activity in activities" :key="activity.id">
-                    <tr>
-                        <td data-cell="Event">
-                            <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
-                                <span class="al-badge__dot" aria-hidden="true"></span>
-                                <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
-                            </span>
-                        </td>
-
-                        <td data-cell="Description">
-                            <div class="al-cell-primary al-break" x-text="activity.description"></div>
-                        </td>
-
-                        <td data-cell="Subject">
-                            <template x-if="activity.subject_type">
-                                <span class="al-chip">
-                                    <span class="al-chip__text" x-text="activity.subject_type.split('\\').pop()"></span>
-                                    <span class="al-faint al-mono" x-text="'#' + activity.subject_id"></span>
-                                </span>
-                            </template>
-                            <template x-if="!activity.subject_type">
-                                <span class="al-faint">—</span>
-                            </template>
-                        </td>
-
-                        <td data-cell="User">
-                            <template x-if="activity.causer_type">
-                                <div class="al-row">
-                                    <span class="al-avatar" aria-hidden="true"
-                                          x-text="(activity.causer_name || '?').charAt(0).toUpperCase()"></span>
-                                    <span class="al-truncate" x-text="activity.causer_name || 'Unknown'"></span>
-                                </div>
-                            </template>
-                            <template x-if="!activity.causer_type">
-                                <span class="al-muted">System</span>
-                            </template>
-                        </td>
-
-                        <td data-cell="When">
-                            <div class="al-truncate" :title="new Date(activity.created_at).toLocaleString()">
-                                <span x-text="window.ActivitylogUi.formatDate(activity.created_at)"></span>
-                            </div>
-                            <div class="al-cell-secondary al-hide-sm" x-text="window.ActivitylogUi.formatTime(activity.created_at)"></div>
-                        </td>
-
-                        <td class="al-table__actions">
-                            <button type="button" class="al-btn al-btn--sm" @click="showActivityDetail(activity)">
-                                Details
-                            </button>
-                        </td>
+            {{-- One tbody per day, which is valid HTML and lets the date be
+                 stated once instead of repeated down every row. --}}
+            <template x-for="group in groupedActivities" :key="group.key">
+                <tbody>
+                    <tr class="al-daybreak">
+                        <td colspan="4" x-text="group.label"></td>
                     </tr>
-                </template>
-            </tbody>
+
+                    <template x-for="activity in group.items" :key="activity.id">
+                        <tr class="al-rowlink"
+                            tabindex="0"
+                            role="button"
+                            :aria-label="`Details for ${activity.event || 'activity'} ${activity.id}`"
+                            @click="showActivityDetail(activity)"
+                            @keydown.enter.prevent="showActivityDetail(activity)"
+                            @keydown.space.prevent="showActivityDetail(activity)">
+                            <td data-cell="Event">
+                                {{-- The tint already carries the meaning; a dot
+                                     inside a coloured pill said it twice. --}}
+                                <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
+                                    <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
+                                </span>
+                            </td>
+
+                            {{-- The record acted upon is the line a reader scans
+                                 for. The description sits underneath it, and only
+                                 when it says something the event badge has not
+                                 already said — on a stock Spatie install it is
+                                 just the event name again. --}}
+                            <td data-cell="Record">
+                                <div class="al-cell-primary al-truncate" x-text="window.ActivitylogUi.recordLabel(activity)"></div>
+                                <div class="al-cell-secondary al-truncate"
+                                     x-show="window.ActivitylogUi.extraDescription(activity)"
+                                     :title="activity.description"
+                                     x-text="window.ActivitylogUi.extraDescription(activity)"></div>
+                            </td>
+
+                            {{-- No avatar. It stamped the same initial down the column
+                                 for every row one person caused, which is decoration
+                                 standing where information should be. --}}
+                            <td data-cell="User">
+                                <span class="al-truncate" x-show="activity.causer_type" x-text="activity.causer_name || 'Unknown'"></span>
+                                <span class="al-muted" x-show="!activity.causer_type">System</span>
+                            </td>
+
+                            <td data-cell="Time" class="al-table__num">
+                                <div class="al-row" style="justify-content:flex-end;gap:.5rem">
+                                    <time class="al-mono al-muted"
+                                          :datetime="activity.created_at"
+                                          :title="window.ActivitylogUi.formatDateTime(activity.created_at)"
+                                          x-text="window.ActivitylogUi.formatTime(activity.created_at)"></time>
+                                    <svg class="al-rowlink__chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="m9 18 6-6-6-6"/>
+                                    </svg>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </template>
         </table>
     </div>
 

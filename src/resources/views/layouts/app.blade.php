@@ -758,6 +758,60 @@
                 return String(value);
             },
 
+            sameDay(a, b) {
+                const x = this._date(a), y = this._date(b);
+
+                return !!x && !!y && x.toDateString() === y.toDateString();
+            },
+
+            /** "Today", "Yesterday", else the full date. */
+            formatDayHeading(value) {
+                const date = this._date(value);
+
+                if (!date) {
+                    return 'Unknown date';
+                }
+
+                const today = new Date();
+                const yesterday = new Date(today);
+                yesterday.setDate(yesterday.getDate() - 1);
+
+                if (date.toDateString() === today.toDateString()) return 'Today';
+                if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+
+                return date.toLocaleDateString(undefined, {
+                    weekday: 'short', day: 'numeric', month: 'long',
+                    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+                });
+            },
+
+            /** The record an activity was recorded against. */
+            recordLabel(activity) {
+                if (activity.subject_type) {
+                    return `${activity.subject_type.split('\\').pop()} #${activity.subject_id}`;
+                }
+
+                return (activity.description || '').trim() || activity.event || '—';
+            },
+
+            /**
+             * The description, but only when it adds something.
+             *
+             * Spatie's default description is the event name, so on a stock
+             * install it repeats the badge beside it word for word. Returning
+             * empty here keeps those rows one line tall.
+             */
+            extraDescription(activity) {
+                const description = (activity.description || '').trim();
+                const event = (activity.event || '').trim();
+
+                if (!description || description.toLowerCase() === event.toLowerCase()) {
+                    return '';
+                }
+
+                return description === this.recordLabel(activity) ? '' : description;
+            },
+
             formatDateTime(value) {
                 const date = this._date(value);
 
@@ -780,6 +834,14 @@
                     ['year', 31536000], ['month', 2592000], ['week', 604800],
                     ['day', 86400], ['hour', 3600], ['minute', 60],
                 ];
+
+                // Beyond a week "last year" and "2 years ago" stop being useful
+                // and start hiding the answer: on an audit trail the reader wants
+                // the date. Relative time earns its place only while it is more
+                // legible than the timestamp.
+                if (Math.abs(seconds) > 7 * 86400) {
+                    return this.formatDate(value);
+                }
 
                 for (const [unit, size] of units) {
                     if (Math.abs(seconds) >= size) {

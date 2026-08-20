@@ -24,98 +24,102 @@
     </div>
 
     <div class="al-card__body">
-        <div x-show="activities.length > 0" x-cloak class="al-timeline">
-            <template x-for="activity in activities" :key="activity.id">
-                <article class="al-timeline__item">
-                    <span class="al-timeline__marker"
-                          :data-event="window.ActivityTypeStyler.getEvent(activity.event)"
-                          aria-hidden="true"></span>
+        {{-- Grouped by day like the table, so the two views tell the same
+             story in the same shape. --}}
+        <div x-show="activities.length > 0" x-cloak class="al-stack al-stack--md">
+            <template x-for="group in groupedActivities" :key="group.key">
+                <section>
+                    <h4 class="al-timeline__date" x-text="group.label"></h4>
 
-                    <div class="al-stack al-stack--sm">
-                        <div class="al-row al-row--wrap" style="gap:.375rem">
-                            <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
-                                <span class="al-badge__dot" aria-hidden="true"></span>
-                                <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
-                            </span>
+                    <div class="al-timeline">
+                        <template x-for="activity in group.items" :key="activity.id">
+                            <article class="al-timeline__item">
+                                <span class="al-timeline__marker"
+                                      :data-event="window.ActivityTypeStyler.getEvent(activity.event)"
+                                      aria-hidden="true"></span>
 
-                            <template x-if="activity.subject_type">
-                                <span class="al-chip">
-                                    <span class="al-chip__text" x-text="activity.subject_type.split('\\').pop()"></span>
-                                    <span class="al-faint al-mono" x-text="'#' + activity.subject_id"></span>
-                                </span>
-                            </template>
+                                <div class="al-row al-row--wrap" style="gap:.4375rem">
+                                    <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
+                                        <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
+                                    </span>
 
-                            <span class="al-grow"></span>
+                                    <span class="al-cell-primary al-truncate" x-text="window.ActivitylogUi.recordLabel(activity)"></span>
 
-                            <time class="al-small al-faint"
-                                  :datetime="activity.created_at"
-                                  :title="window.ActivitylogUi.formatDateTime(activity.created_at)"
-                                  x-text="window.ActivitylogUi.formatRelative(activity.created_at)"></time>
-                        </div>
+                                    <span class="al-grow"></span>
 
-                        <p class="al-break" x-text="activity.description"></p>
+                                    <time class="al-mono al-faint al-small"
+                                          :datetime="activity.created_at"
+                                          :title="window.ActivitylogUi.formatDateTime(activity.created_at)"
+                                          x-text="window.ActivitylogUi.formatTime(activity.created_at)"></time>
+                                </div>
 
-                        <div class="al-row al-row--wrap al-small al-muted">
-                            <span x-show="activity.causer_type">
-                                by <span style="color:var(--ink)" x-text="activity.causer_name || 'Unknown'"></span>
-                            </span>
-                            <span x-show="!activity.causer_type">by System</span>
+                                <p class="al-cell-secondary al-break"
+                                   x-show="window.ActivitylogUi.extraDescription(activity)"
+                                   x-text="window.ActivitylogUi.extraDescription(activity)"></p>
 
-                            <span class="al-grow"></span>
+                                <div class="al-row al-row--wrap al-small al-muted" style="margin-top:.25rem;gap:.5rem">
+                                    <span x-show="activity.causer_type">
+                                        by <span style="color:var(--ink)" x-text="activity.causer_name || 'Unknown'"></span>
+                                    </span>
+                                    <span x-show="!activity.causer_type">by System</span>
 
-                            <button type="button" class="al-btn al-btn--ghost al-btn--sm" @click="showActivityDetail(activity)">
-                                Details
-                            </button>
-                        </div>
+                                    {{-- The change block reads attribute_changes when present
+                                         and falls back to the old/attributes pair inside
+                                         properties, which is where Spatie v4 kept them. --}}
+                                    <div x-data="{
+                                             expanded: false,
+                                             get changes() {
+                                                 if (activity.attribute_changes) return activity.attribute_changes;
+                                                 const props = activity.properties;
+                                                 if (props && (props.old || props.attributes)) {
+                                                     return { old: props.old, attributes: props.attributes };
+                                                 }
+                                                 return null;
+                                             }
+                                         }"
+                                         x-show="changes"
+                                         style="display:contents">
+                                        <button type="button"
+                                                class="al-btn al-btn--ghost al-btn--sm"
+                                                @click="expanded = !expanded"
+                                                :aria-expanded="expanded">
+                                            <span x-text="expanded ? 'Hide changes' : 'Changes'"></span>
+                                        </button>
 
-                        {{-- The change block reads attribute_changes when present and
-                             falls back to the old/attributes pair inside properties,
-                             which is where Spatie v4 kept them. --}}
-                        <div x-data="{
-                                 expanded: false,
-                                 get changes() {
-                                     if (activity.attribute_changes) return activity.attribute_changes;
-                                     const props = activity.properties;
-                                     if (props && (props.old || props.attributes)) {
-                                         return { old: props.old, attributes: props.attributes };
-                                     }
-                                     return null;
-                                 }
-                             }"
-                             x-show="changes">
-                            <button type="button" class="al-btn al-btn--ghost al-btn--sm" @click="expanded = !expanded" :aria-expanded="expanded">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                     :style="expanded ? 'transform:rotate(90deg)' : ''">
-                                    <path d="m9 18 6-6-6-6"/>
-                                </svg>
-                                <span x-text="expanded ? 'Hide changes' : 'Show changes'"></span>
-                            </button>
-
-                            <div x-show="expanded" x-cloak style="margin-top:.5rem">
-                                <template x-if="changes">
-                                    <div class="al-diff">
-                                        <template x-for="key in Object.keys(changes.attributes || changes.old || {})" :key="key">
-                                            <div class="al-diff__row">
-                                                <div class="al-diff__key" x-text="key"></div>
-                                                <div class="al-diff__values">
-                                                    <template x-if="changes.old && changes.old[key] !== undefined">
-                                                        <span class="al-diff__old" x-text="window.ActivitylogUi.stringify(changes.old[key])"></span>
-                                                    </template>
-                                                    <template x-if="changes.old && changes.old[key] !== undefined && changes.attributes && changes.attributes[key] !== undefined">
-                                                        <span class="al-diff__arrow" aria-hidden="true">→</span>
-                                                    </template>
-                                                    <template x-if="changes.attributes && changes.attributes[key] !== undefined">
-                                                        <span class="al-diff__new" x-text="window.ActivitylogUi.stringify(changes.attributes[key])"></span>
+                                        <div x-show="expanded" x-cloak style="flex-basis:100%;margin-top:.375rem">
+                                            <template x-if="changes">
+                                                <div class="al-diff">
+                                                    <template x-for="key in Object.keys(changes.attributes || changes.old || {})" :key="key">
+                                                        <div class="al-diff__row">
+                                                            <div class="al-diff__key" x-text="key"></div>
+                                                            <div class="al-diff__values">
+                                                                <template x-if="changes.old && changes.old[key] !== undefined">
+                                                                    <span class="al-diff__old" x-text="window.ActivitylogUi.stringify(changes.old[key])"></span>
+                                                                </template>
+                                                                <template x-if="changes.old && changes.old[key] !== undefined && changes.attributes && changes.attributes[key] !== undefined">
+                                                                    <span class="al-diff__arrow" aria-hidden="true">→</span>
+                                                                </template>
+                                                                <template x-if="changes.attributes && changes.attributes[key] !== undefined">
+                                                                    <span class="al-diff__new" x-text="window.ActivitylogUi.stringify(changes.attributes[key])"></span>
+                                                                </template>
+                                                            </div>
+                                                        </div>
                                                     </template>
                                                 </div>
-                                            </div>
-                                        </template>
+                                            </template>
+                                        </div>
                                     </div>
-                                </template>
-                            </div>
-                        </div>
+
+                                    <span class="al-grow"></span>
+
+                                    <button type="button" class="al-btn al-btn--ghost al-btn--sm" @click="showActivityDetail(activity)">
+                                        Details
+                                    </button>
+                                </div>
+                            </article>
+                        </template>
                     </div>
-                </article>
+                </section>
             </template>
         </div>
 

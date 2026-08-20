@@ -28,7 +28,6 @@
                 <div class="al-stack al-stack--lg">
                     <div class="al-row al-row--wrap" style="gap:.5rem">
                         <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
-                            <span class="al-badge__dot" aria-hidden="true"></span>
                             <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
                         </span>
                         <span class="al-chip" x-show="activity.log_name">

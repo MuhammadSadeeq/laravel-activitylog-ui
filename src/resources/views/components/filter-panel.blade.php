@@ -110,18 +110,18 @@
             </div>
         </div>
 
+        {{-- Eight presets as pills wrapped into three ragged rows and cost about
+             90px of a narrow sidebar. A select states the same choice in one. --}}
         <div class="al-field">
-            <span class="al-label">Date range</span>
-            <div class="al-row al-row--wrap" style="gap:.25rem">
+            <label class="al-label" for="al-filter-range">Date range</label>
+            <select id="al-filter-range"
+                    class="al-select"
+                    x-model="filters.date_preset"
+                    @change="setDatePreset(filters.date_preset)">
                 <template x-for="preset in datePresets" :key="preset.value">
-                    <button type="button"
-                            class="al-btn al-btn--sm"
-                            :class="filters.date_preset === preset.value ? 'al-btn--primary' : ''"
-                            :aria-pressed="filters.date_preset === preset.value ? 'true' : 'false'"
-                            @click="setDatePreset(preset.value)"
-                            x-text="preset.label"></button>
+                    <option :value="preset.value" x-text="preset.label"></option>
                 </template>
-            </div>
+            </select>
 
             <div x-show="filters.date_preset === 'custom'" x-cloak class="al-row" style="gap:.5rem;margin-top:.5rem">
                 <div class="al-field al-grow">

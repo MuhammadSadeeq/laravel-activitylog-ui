@@ -1,13 +1,10 @@
 {{-- No x-init="init()": Alpine.data() already runs init() automatically, and
      calling it here as well registered every watcher and listener twice. --}}
 <div x-data="analyticsData()" class="al-stack al-stack--lg">
+    {{-- No second page heading: the toolbar above already says what this is,
+         and "Activity over the selected period" restated the control beside it. --}}
     <div class="al-toolbar">
-        <div class="al-toolbar__grow">
-            <h2>Analytics</h2>
-            <p class="al-small al-muted" style="margin-top:.125rem">
-                Activity over the selected period.
-            </p>
-        </div>
+        <div class="al-toolbar__grow"></div>
 
         <div class="al-segmented" role="group" aria-label="Period">
             <template x-for="period in [
@@ -77,14 +74,18 @@
             {{-- Chart.js is fetched the first time this view is opened, not on
                  every page load. It is ~200KB that the table and timeline never
                  touch. --}}
-            <div class="al-chart al-chart--tall" x-show="chartReady || activityTrends?.dates?.length">
+            {{-- Only when there is something to plot. Keyed on chartReady alone
+                 it drew an empty grid 340px tall over a period with no activity,
+                 which reads as a broken chart rather than as a quiet week. --}}
+            <div class="al-chart al-chart--tall" x-show="hasTrendData">
                 <canvas x-ref="trendsCanvas" role="img" aria-label="Activity over time"></canvas>
             </div>
             <p x-show="chartError" x-cloak class="al-note al-note--warning" style="margin-top:.75rem">
                 The chart library could not be loaded, so the graph is unavailable. The figures above and below are unaffected.
             </p>
-            <div x-show="!loading && !activityTrends?.dates?.length" x-cloak class="al-empty">
+            <div x-show="!loading && !hasTrendData" x-cloak class="al-empty">
                 <p class="al-empty__title">Nothing recorded in this period</p>
+                <p class="al-empty__body">Choose a wider range, or clear the filters.</p>
             </div>
         </div>
     </div>
@@ -200,6 +201,19 @@ document.addEventListener('alpine:init', () => {
         chart: null,
         chartReady: false,
         chartError: false,
+
+        /** Whether any series actually carries a non-zero count. */
+        get hasTrendData() {
+            const datasets = this.activityTrends?.datasets;
+
+            if (!Array.isArray(datasets) || datasets.length === 0) {
+                return false;
+            }
+
+            return datasets.some(dataset =>
+                Array.isArray(dataset.data) && dataset.data.some(point => Number(point.count) > 0)
+            );
+        },
         // Filters coming from the shared filter panel, kept separate from this
         // component's own period selection.
         dashboardFilters: {},
@@ -289,7 +303,7 @@ document.addEventListener('alpine:init', () => {
                     this.popularModels = data.data.popular_models;
                     this.activityTrends = data.data.activity_trends;
 
-                    if (this.activityTrends?.dates?.length) {
+                    if (this.hasTrendData) {
                         this.renderTrendsChart();
                     }
 

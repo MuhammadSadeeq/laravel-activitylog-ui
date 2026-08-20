@@ -6,12 +6,15 @@
 
 @section('content')
 <div x-data="activityDashboard()" x-init="init()" class="al-stack al-stack--lg">
+    {{-- The page title lives in the toolbar rather than in a block of its own.
+         A standalone heading plus a sentence of explanation cost about 90px of
+         vertical space above a table whose whole job is to show rows. --}}
     <div class="al-toolbar">
-        <div class="al-toolbar__grow">
-            <h1>{{ config('activitylog-ui.ui.title', 'Activity Log') }}</h1>
-            <p class="al-small al-muted" style="margin-top:.125rem">
-                Every recorded change, who made it, and what it changed.
-            </p>
+        <div class="al-toolbar__grow al-row" style="gap:.625rem">
+            <h1 style="font-size:var(--step-3)">{{ config('activitylog-ui.ui.title', 'Activity Log') }}</h1>
+            <span class="al-chip tnum" x-show="hasLoaded && !loadError" x-cloak>
+                <span class="al-chip__text" x-text="totalActivities.toLocaleString()"></span>
+            </span>
         </div>
 
         <div class="al-segmented" role="group" aria-label="View">
@@ -315,6 +318,31 @@ function activityDashboard() {
             window.dispatchEvent(new CustomEvent('show-export-modal', {
                 detail: { filters: this.currentFilters }
             }));
+        },
+
+        /**
+         * Activities bucketed by calendar day, so the table can state a date
+         * once per group instead of repeating it on every row.
+         */
+        get groupedActivities() {
+            const groups = [];
+
+            for (const activity of this.activities) {
+                const date = new Date(activity.created_at);
+                const key = Number.isNaN(date.getTime()) ? 'unknown' : date.toDateString();
+
+                if (!groups.length || groups[groups.length - 1].key !== key) {
+                    groups.push({
+                        key,
+                        label: window.ActivitylogUi.formatDayHeading(activity.created_at),
+                        items: [],
+                    });
+                }
+
+                groups[groups.length - 1].items.push(activity);
+            }
+
+            return groups;
         },
 
         showActivityDetail(activity) {

@@ -21,14 +21,14 @@
 :root {
     /* Neutrals carry a slight warm bias, so the greys read as chosen rather
        than as the browser default. */
-    --ground: #f7f7f6;
+    --ground: #f4f4f2;
     --surface: #ffffff;
-    --surface-sunken: #f2f2f0;
+    --surface-sunken: #fafaf9;
     --surface-raised: #ffffff;
-    --surface-hover: #f6f6f4;
+    --surface-hover: #f7f7f5;
 
-    --border: #e2e1de;
-    --border-strong: #d0cfca;
+    --border: #e4e3df;
+    --border-strong: #cecdc7;
 
     --ink: #1b1b19;
     --ink-muted: #64635e;
@@ -79,6 +79,7 @@
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
             "Liberation Mono", monospace;
 
+    --step--2: 0.6875rem;
     --step--1: 0.8125rem;
     --step-0: 0.875rem;
     --step-1: 1rem;
@@ -91,14 +92,16 @@
 }
 
 html.dark {
-    --ground: #0f100f;
-    --surface: #17181a;
-    --surface-sunken: #121314;
-    --surface-raised: #1d1e21;
-    --surface-hover: #212226;
+    /* The first pass put ground and surface within a few percent of each other,
+       so nothing read as a card and the borders disappeared. Widened. */
+    --ground: #0b0c0e;
+    --surface: #16181c;
+    --surface-sunken: #101216;
+    --surface-raised: #1c1f24;
+    --surface-hover: #1f2228;
 
-    --border: #2a2b2e;
-    --border-strong: #3a3b3f;
+    --border: #262a31;
+    --border-strong: #363b44;
 
     --ink: #ececeb;
     --ink-muted: #a3a29c;
@@ -370,7 +373,12 @@ html.dark .al-select {
     min-width: 0;
 }
 .al-check:hover { background: var(--surface-hover); }
-.al-check input { accent-color: var(--accent); width: 0.875rem; height: 0.875rem; flex: none; }
+.al-check input {
+    accent-color: var(--focus);
+    width: 0.9375rem; height: 0.9375rem;
+    flex: none;
+    cursor: pointer;
+}
 .al-check span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ----------------------------------------------------------------- cards -- */
@@ -388,16 +396,16 @@ html.dark .al-select {
     justify-content: space-between;
     gap: 0.75rem;
     flex-wrap: wrap;
-    padding: 0.875rem 1rem;
+    padding: 0.625rem 1rem;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
 }
 
 .al-card__title { font-size: var(--step-1); font-weight: 600; }
 .al-card__meta { font-size: var(--step--1); color: var(--ink-muted); margin-top: 0.125rem; }
-.al-card__body { padding: 1rem; }
+.al-card__body { padding: 0.875rem 1rem; }
 .al-card__footer {
-    padding: 0.75rem 1rem;
+    padding: 0.5625rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--surface-sunken);
 }
@@ -408,14 +416,15 @@ html.dark .al-select {
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.125rem 0.4375rem;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--event-neutral-border);
+    padding: 0.0625rem 0.4375rem 0.0625rem 0.375rem;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
     background: var(--event-neutral-bg);
     color: var(--event-neutral);
-    font-size: 0.75rem;
-    font-weight: 500;
-    line-height: 1.4;
+    font-size: var(--step--2);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.5;
     white-space: nowrap;
     max-width: 100%;
 }
@@ -445,7 +454,7 @@ html.dark .al-select {
 
 .al-table { width: 100%; border-collapse: collapse; font-size: var(--step-0); }
 .al-table th {
-    padding: 0.5rem 1rem;
+    padding: 0.4375rem 1rem;
     background: var(--surface-sunken);
     border-bottom: 1px solid var(--border);
     text-align: left;
@@ -456,10 +465,17 @@ html.dark .al-select {
     color: var(--ink-muted);
     white-space: nowrap;
 }
+/* Fixed layout so the columns are weighted by intent rather than by whichever
+   description happens to be longest on the current page. */
+.al-table { table-layout: fixed; }
+.al-table col.al-col-event  { width: 7rem; }
+.al-table col.al-col-record { width: 42%; }
+.al-table col.al-col-time   { width: 5.5rem; }
+
 .al-table td {
-    padding: 0.625rem 1rem;
+    padding: 0.4375rem 1rem;
     border-bottom: 1px solid var(--border);
-    vertical-align: top;
+    vertical-align: middle;
 }
 .al-table tbody tr:last-child td { border-bottom: 0; }
 .al-table tbody tr { transition: background-color .1s ease; }
@@ -497,13 +513,36 @@ html.dark .al-select {
     }
     .al-table td[data-cell="Event"] { grid-column: 1; grid-row: 1; }
     .al-table td[data-cell="Event"]::before { display: none; }
-    .al-table td[data-cell="When"] { grid-column: 2; grid-row: 1; text-align: right; }
-    .al-table td[data-cell="When"]::before { display: none; }
-    .al-table td[data-cell="Description"] { grid-column: 1 / -1; }
-    .al-table td[data-cell="Subject"] { grid-column: 1 / -1; }
+    .al-table td[data-cell="Time"] { grid-column: 2; grid-row: 1; text-align: right; }
+    .al-table td[data-cell="Time"]::before { display: none; }
+    .al-table td[data-cell="Record"] { grid-column: 1 / -1; }
     .al-table td[data-cell="User"] { grid-column: 1 / -1; }
     .al-table td.al-table__actions { grid-column: 1 / -1; text-align: left; }
 }
+
+.al-table tr.al-daybreak td {
+    padding: 0.75rem 1rem 0.3125rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--step--2);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+.al-table tr.al-daybreak:hover td { background: var(--surface); }
+.al-table tr.al-daybreak + tr td { border-top: 0; }
+
+/* The row is the target. A per-row button column was pure chrome — six columns
+   of data and a seventh of identical buttons. */
+.al-table tbody tr.al-rowlink { cursor: pointer; }
+.al-table tbody tr.al-rowlink:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+}
+.al-rowlink__chevron { color: transparent; transition: color .12s ease; }
+.al-table tbody tr.al-rowlink:hover .al-rowlink__chevron,
+.al-table tbody tr.al-rowlink:focus-visible .al-rowlink__chevron { color: var(--ink-faint); }
 
 /* ------------------------------------------------------------- timeline --- */
 
@@ -525,12 +564,12 @@ html.dark .al-select {
     color: var(--ink-muted);
     margin-bottom: 0.5rem;
 }
-.al-timeline__item { position: relative; padding: 0.625rem 0; }
+.al-timeline__item { position: relative; padding: 0.5rem 0; }
 .al-timeline__item + .al-timeline__item { border-top: 1px solid var(--border); }
 .al-timeline__marker {
     position: absolute;
     left: -1.75rem;
-    top: 1rem;
+    top: 0.8125rem;
     width: 0.875rem; height: 0.875rem;
     border-radius: var(--radius-full);
     background: var(--surface);
@@ -548,7 +587,7 @@ html.dark .al-select {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 0.875rem 1rem;
+    padding: 0.75rem 0.875rem;
     min-width: 0;
 }
 .al-stat__label {
@@ -557,8 +596,8 @@ html.dark .al-select {
     color: var(--ink-faint);
 }
 .al-stat__value {
-    margin-top: 0.25rem;
-    font-size: var(--step-4);
+    margin-top: 0.125rem;
+    font-size: var(--step-3);
     font-weight: 600;
     letter-spacing: -0.02em;
     line-height: 1.1;
@@ -614,7 +653,7 @@ html.dark .al-select {
     box-shadow: var(--shadow-sm);
 }
 
-.al-empty { padding: 3rem 1.5rem; text-align: center; color: var(--ink-muted); }
+.al-empty { padding: 2.25rem 1.5rem; text-align: center; color: var(--ink-muted); }
 .al-empty__icon { margin: 0 auto 0.75rem; color: var(--ink-faint); }
 .al-empty__title { font-weight: 600; color: var(--ink); }
 .al-empty__body { margin-top: 0.25rem; font-size: var(--step--1); max-width: 32rem; margin-inline: auto; }
@@ -789,7 +828,7 @@ html.al-scroll-locked, html.al-scroll-locked body { overflow: hidden; }
 .al-stack { display: flex; flex-direction: column; }
 .al-stack--sm { gap: 0.5rem; }
 .al-stack--md { gap: 0.75rem; }
-.al-stack--lg { gap: 1.25rem; }
+.al-stack--lg { gap: 1.125rem; }
 
 .al-row { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .al-row--between { justify-content: space-between; }
