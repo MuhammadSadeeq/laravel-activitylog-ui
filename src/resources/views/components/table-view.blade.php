@@ -61,8 +61,8 @@
                             <td data-cell="Event">
                                 {{-- The tint already carries the meaning; a dot
                                      inside a coloured pill said it twice. --}}
-                                <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
-                                    <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
+                                <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)" :title="activity.event">
+                                    <span class="al-badge__label" x-text="window.ActivitylogUi.humanEvent(activity.event)"></span>
                                 </span>
                             </td>
 

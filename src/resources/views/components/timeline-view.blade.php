@@ -35,8 +35,8 @@
                                       aria-hidden="true"></span>
 
                                 <div class="al-row al-row--wrap" style="gap:.4375rem">
-                                    <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)">
-                                        <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
+                                    <span class="al-badge" :data-event="window.ActivityTypeStyler.getEvent(activity.event)" :title="activity.event">
+                                        <span class="al-badge__label" x-text="window.ActivitylogUi.humanEvent(activity.event)"></span>
                                     </span>
 
                                     {{-- The same affordance as the table: the

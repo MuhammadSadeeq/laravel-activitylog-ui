@@ -467,7 +467,25 @@ class AnalyticsService
             $counts[$this->dayKey($row->date)][$row->event] = (int) $row->count;
         }
 
-        $eventTypes = $activities->pluck('event')->unique()->filter();
+        // Only the busiest handful get their own line. An application can log
+        // any number of event names — this dataset has thirteen — and past about
+        // six the palette starts repeating, so two lines share a colour and the
+        // legend stops identifying anything. The rest are summed into one
+        // series, which keeps the totals honest.
+        $totals = [];
+
+        foreach ($activities as $row) {
+            if ($row->event === null || $row->event === '') {
+                continue;
+            }
+
+            $totals[$row->event] = ($totals[$row->event] ?? 0) + (int) $row->count;
+        }
+
+        arsort($totals);
+        $limit = (int) config('activitylog-ui.analytics.max_chart_series', 6);
+        $eventTypes = collect(array_slice(array_keys($totals), 0, $limit));
+        $remainder = array_slice(array_keys($totals), $limit);
         $chartData = [];
 
         foreach ($eventTypes as $eventType) {
@@ -481,9 +499,34 @@ class AnalyticsService
 
             $colors = config('activitylog-ui.analytics.chart_colors', []);
             $chartData[] = [
-                'label' => ucfirst($eventType),
+                // Snake_case is how applications log; it is not how a chart
+                // legend should read.
+                'label' => ucfirst(str_replace('_', ' ', (string) $eventType)),
                 'data' => $eventData,
                 'color' => $colors[$eventType] ?? '#6b7280',
+            ];
+        }
+
+        // Everything past the limit is summed rather than dropped. A chart that
+        // silently omits seven of thirteen event types is worse than one whose
+        // colours repeat.
+        if ($remainder !== []) {
+            $otherData = [];
+
+            foreach ($dates as $date) {
+                $sum = 0;
+
+                foreach ($remainder as $eventType) {
+                    $sum += $counts[$date][$eventType] ?? 0;
+                }
+
+                $otherData[] = ['date' => $date, 'count' => $sum];
+            }
+
+            $chartData[] = [
+                'label' => sprintf('Other (%d more)', count($remainder)),
+                'data' => $otherData,
+                'color' => '#6b7280',
             ];
         }
 

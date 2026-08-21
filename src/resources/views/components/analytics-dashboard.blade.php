@@ -83,7 +83,16 @@
             <p x-show="chartError" x-cloak class="al-note al-note--warning" style="margin-top:.75rem">
                 The chart library could not be loaded, so the graph is unavailable. The figures above and below are unaffected.
             </p>
-            <div x-show="!loading && !hasTrendData" x-cloak class="al-empty">
+            {{-- Two different situations, said differently. --}}
+            <div x-show="!loading && !hasTrendData && hasTrendCounts" x-cloak class="al-empty">
+                {{-- Deliberately no count here. Summing the series excludes
+                     activities with no event, so it read 466 beside a tile
+                     saying 469 — two numbers for one thing, on one screen. --}}
+                <p class="al-empty__title">A single day has no trend to plot</p>
+                <p class="al-empty__body">Pick a wider range to see one. The totals above and the breakdown below both cover this day.</p>
+            </div>
+
+            <div x-show="!loading && !hasTrendCounts" x-cloak class="al-empty">
                 <p class="al-empty__title">Nothing recorded in this period</p>
                 <p class="al-empty__body">Choose a wider range, or clear the filters.</p>
             </div>
@@ -100,7 +109,7 @@
                     <template x-for="type in eventTypes" :key="type.name">
                         <div>
                             <div class="al-bar__head">
-                                <span class="al-truncate" x-text="type.name"></span>
+                                <span class="al-truncate" :title="type.name" x-text="window.ActivitylogUi.humanEvent(type.name)"></span>
                                 <span class="al-muted tnum" x-text="Number(type.count).toLocaleString()"></span>
                             </div>
                             <div class="al-bar__track">
@@ -202,8 +211,8 @@ document.addEventListener('alpine:init', () => {
         chartReady: false,
         chartError: false,
 
-        /** Whether any series actually carries a non-zero count. */
-        get hasTrendData() {
+        /** Whether any series carries a non-zero count. */
+        get hasTrendCounts() {
             const datasets = this.activityTrends?.datasets;
 
             if (!Array.isArray(datasets) || datasets.length === 0) {
@@ -212,6 +221,26 @@ document.addEventListener('alpine:init', () => {
 
             return datasets.some(dataset =>
                 Array.isArray(dataset.data) && dataset.data.some(point => Number(point.count) > 0)
+            );
+        },
+
+        /**
+         * A line needs at least two points to mean anything.
+         *
+         * On the "Today" period this drew an empty grid with a legend and an
+         * axis scaled to data that was never plotted — 469 activities looked
+         * like none. One day is a number, not a trend, and the breakdown below
+         * already states it.
+         */
+        get hasTrendData() {
+            return this.hasTrendCounts && (this.activityTrends?.dates?.length ?? 0) >= 2;
+        },
+
+        get singleDayTotal() {
+            if (!this.hasTrendCounts) return 0;
+
+            return (this.activityTrends.datasets || []).reduce(
+                (sum, dataset) => sum + (dataset.data || []).reduce((n, point) => n + Number(point.count || 0), 0), 0
             );
         },
         // Filters coming from the shared filter panel, kept separate from this
@@ -404,8 +433,12 @@ document.addEventListener('alpine:init', () => {
                         borderColor: series[index % series.length],
                         backgroundColor: 'transparent',
                         borderWidth: 1.75,
-                        pointRadius: 0,
-                        pointHoverRadius: 3,
+                        // A line needs two points. With pointRadius 0 a
+                        // single-day period drew nothing at all — 469 activities
+                        // rendered as an empty grid.
+                        pointRadius: (this.activityTrends.dates || []).length <= 31 ? 2.5 : 0,
+                        spanGaps: true,
+                        pointHoverRadius: 4,
                         tension: 0.25,
                     }))
                 },

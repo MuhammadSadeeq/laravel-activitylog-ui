@@ -187,6 +187,12 @@ return [
     */
     'analytics' => [
         'cache_duration' => 3600, // seconds
+
+        // Distinct event series the trend chart draws before the rest are summed
+        // into a single "Other" line. An application can log any number of event
+        // names, and past about six the palette repeats — two lines share a
+        // colour and the legend stops identifying anything.
+        'max_chart_series' => 6,
         'chart_colors' => [
             'created' => '#10b981',
             'updated' => '#3b82f6',

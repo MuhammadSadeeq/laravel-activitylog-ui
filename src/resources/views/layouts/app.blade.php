@@ -682,6 +682,23 @@
                 });
             },
 
+            /**
+             * A recorded event name, made readable.
+             *
+             * Applications log snake_case — "subscription_renewed",
+             * "permission_changed" — and printing that raw put underscores in
+             * badges, chart legends and bar labels.
+             */
+            humanEvent(event) {
+                const value = String(event ?? '').trim();
+
+                if (value === '') {
+                    return 'unknown';
+                }
+
+                return value.replace(/[_-]+/g, ' ');
+            },
+
             /** The record an activity was recorded against. */
             recordLabel(activity) {
                 if (activity.subject_type) {

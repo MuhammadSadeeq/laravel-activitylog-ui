@@ -475,7 +475,7 @@ html.dark .al-select {
 /* Fixed layout so the columns are weighted by intent rather than by whichever
    description happens to be longest on the current page. */
 .al-table { table-layout: fixed; }
-.al-table col.al-col-event  { width: 7rem; }
+.al-table col.al-col-event  { width: 9.5rem; }
 .al-table col.al-col-record { width: 42%; }
 .al-table col.al-col-time   { width: 5.5rem; }
 
