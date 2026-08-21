@@ -17,9 +17,29 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class AssetController extends Controller
 {
+    /**
+     * A short hash of the stylesheet's contents, for the URL.
+     *
+     * Serving it immutable for a year from a fixed URL meant an upgraded
+     * package rendered new markup against a year-old stylesheet, and no
+     * revalidation request was ever made to notice. The hash goes in the path
+     * so a changed file is a different URL.
+     */
+    public static function version(): string
+    {
+        static $version;
+
+        return $version ??= substr(md5_file(static::path()) ?: 'dev', 0, 12);
+    }
+
+    protected static function path(): string
+    {
+        return __DIR__ . '/../../resources/css/activitylog-ui.css';
+    }
+
     public function stylesheet(Request $request): Response
     {
-        $path = __DIR__ . '/../../resources/css/activitylog-ui.css';
+        $path = static::path();
 
         if (!is_file($path)) {
             abort(404);
@@ -29,8 +49,16 @@ class AssetController extends Controller
         // without anyone having to think about it.
         $etag = '"' . substr(md5_file($path), 0, 16) . '"';
 
-        if (trim((string) $request->headers->get('If-None-Match'), 'W/') === $etag) {
-            return response('', 304)->withHeaders(['ETag' => $etag, 'Cache-Control' => 'public, max-age=31536000']);
+        $candidates = array_map(
+            fn ($value) => ltrim(trim($value), 'W/'),
+            explode(',', (string) $request->headers->get('If-None-Match'))
+        );
+
+        if (in_array('*', $candidates, true) || in_array($etag, $candidates, true)) {
+            return response('', 304)->withHeaders([
+                'ETag' => $etag,
+                'Cache-Control' => 'public, max-age=31536000, immutable',
+            ]);
         }
 
         return response(file_get_contents($path), 200, [

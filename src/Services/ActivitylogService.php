@@ -30,9 +30,15 @@ class ActivitylogService
 
         $query = Activity::query()
             ->with(config('activitylog-ui.performance.eager_load_relations', ['causer', 'subject']))
-            // The model's own key, not the literal 'id'. A configured activity
-            // model may name its key something else, and ordering by a column
-            // that does not exist failed every listing.
+            // By time first, then by key as a tiebreak.
+            //
+            // Ordering by the key alone assumed the key rises with created_at.
+            // It usually does, but a backdated or imported activity breaks it —
+            // and the day headings are derived from created_at, so the list
+            // rendered "20 January 2025" above "27 June 2025" on the very first
+            // page of the test data. The key still decides ties, which keeps
+            // pagination stable for rows sharing a timestamp.
+            ->orderByDesc($model->qualifyColumn('created_at'))
             ->orderByDesc($model->getQualifiedKeyName());
 
         $query = $this->applyFilters($query, $filters);

@@ -331,9 +331,15 @@ function activityDashboard() {
                 const date = new Date(activity.created_at);
                 const key = Number.isNaN(date.getTime()) ? 'unknown' : date.toDateString();
 
-                if (!groups.length || groups[groups.length - 1].key !== key) {
+                // The key must be unique per GROUP, not per day. Grouping is
+                // run-length, so one date can open several groups on a page —
+                // and a keyed x-for collapses duplicates to a single node,
+                // silently dropping every other group's rows. That is row loss
+                // with no error, in an audit log.
+                if (!groups.length || groups[groups.length - 1].date !== key) {
                     groups.push({
-                        key,
+                        key: key + '#' + groups.length,
+                        date: key,
                         label: window.ActivitylogUi.formatDayHeading(activity.created_at),
                         items: [],
                     });

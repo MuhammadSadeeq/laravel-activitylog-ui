@@ -6,7 +6,7 @@
     <div class="al-toolbar">
         <div class="al-toolbar__grow"></div>
 
-        <div class="al-segmented" role="group" aria-label="Period">
+        <div class="al-segmented al-row--wrap" role="group" aria-label="Period" style="max-width:100%;flex-wrap:wrap">
             <template x-for="period in [
                 { value: 'today', label: 'Today' },
                 { value: '7', label: '7 days' },
@@ -162,7 +162,7 @@
             <h3 class="al-card__title">Daily breakdown</h3>
         </div>
         <div class="al-card__body">
-            <div class="al-bars" x-show="timeline.length > 0">
+            <div class="al-bars" x-show="timeline.some(day => Number(day.count) > 0)">
                 <template x-for="day in timeline" :key="day.date">
                     <div>
                         <div class="al-bar__head">
@@ -178,7 +178,7 @@
                     </div>
                 </template>
             </div>
-            <div x-show="!loading && timeline.length === 0" x-cloak class="al-empty">
+            <div x-show="!loading && !timeline.some(day => Number(day.count) > 0)" x-cloak class="al-empty">
                 <p class="al-empty__title">Nothing recorded in this period</p>
             </div>
         </div>
@@ -246,6 +246,15 @@ document.addEventListener('alpine:init', () => {
 
             window.addEventListener('filter-changed', onFilters);
             window.addEventListener('filter-panel-ready', onFilters);
+
+            // Chart colours are read from the stylesheet when the chart is
+            // built, so a theme toggle otherwise left the previous theme's
+            // axis labels and grid on the canvas.
+            this.$watch('$store.darkMode.on', () => {
+                if (this.chart && this.hasTrendData) {
+                    this.renderTrendsChart();
+                }
+            });
         },
 
         async loadAnalytics() {

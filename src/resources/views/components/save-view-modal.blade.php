@@ -3,11 +3,12 @@
      @keydown.escape.window="open = false"
      x-show="open"
      x-cloak
-     x-effect="window.ActivitylogUi.lockScroll(open)"
+     x-effect="window.ActivitylogUi.lockScroll(open); window.ActivitylogUi.trapFocus($refs.panel, open)"
+     @keydown.tab="window.ActivitylogUi.keepTabInside($event, $refs.panel)"
      class="al-dialog">
     <div class="al-dialog__backdrop" @click="open = false"></div>
 
-    <form class="al-dialog__panel"
+    <form x-ref="panel" class="al-dialog__panel"
           style="max-width:26rem"
           role="dialog"
           aria-modal="true"
@@ -33,12 +34,11 @@
                        x-model="viewName">
             </div>
 
-            <div x-show="Object.values(filters).some(v => v !== null && v !== '' && !(Array.isArray(v) && v.length === 0))">
+            <div x-show="window.ActivitylogUi.hasRealFilters(filters)">
                 <p class="al-label" style="margin-bottom:.375rem">Filters included</p>
                 <div class="al-row al-row--wrap" style="gap:.25rem">
                     <template x-for="[key, value] in Object.entries(filters)" :key="key">
-                        <span class="al-chip"
-                              x-show="value !== null && value !== '' && !(Array.isArray(value) && value.length === 0)">
+                        <span class="al-chip" x-show="window.ActivitylogUi.isRealFilter(key, value)">
                             <span class="al-faint" x-text="key.replace(/_/g, ' ')"></span>
                             <span class="al-chip__text" x-text="Array.isArray(value) ? value.join(', ') : value"></span>
                         </span>

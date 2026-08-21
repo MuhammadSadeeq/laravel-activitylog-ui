@@ -7,7 +7,7 @@
     on every page load and all of them needing the same edit whenever anything
     changed. There is one copy now; the stylesheet handles the widths.
 --}}
-<aside class="al-card" x-data="{ ...filterPanel(), pendingDelete: null }" x-init="init()">
+<aside class="al-card" x-data="filterPanel()" x-init="init()">
     <div class="al-card__header">
         <div class="al-grow al-row" style="gap:.5rem">
             <h3 class="al-card__title">Filters</h3>
@@ -20,9 +20,9 @@
                     <button type="button"
                             class="al-btn al-btn--ghost al-btn--sm"
                             @click="open = !open"
-                            @click.away="open = false"
                             @keydown.escape.window="open = false"
-                            :aria-expanded="open ? 'true' : 'false'">
+                            :aria-expanded="open ? 'true' : 'false'"
+                            aria-label="Saved views">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
                         </svg>
@@ -32,6 +32,7 @@
                     <div x-show="open"
                          x-cloak
                          x-transition.opacity.duration.120ms
+                         @click.outside="open = false"
                          class="al-card"
                          style="position:absolute;right:0;top:calc(100% + .375rem);width:16rem;max-height:20rem;overflow:auto;box-shadow:var(--shadow);z-index:20">
                         <div style="padding:.375rem">
@@ -157,7 +158,6 @@
                         class="al-btn al-btn--block"
                         style="justify-content:space-between"
                         @click="open = !open; if (open) $nextTick(() => $refs.causerSearch?.focus())"
-                        @click.away="open = false"
                         @keydown.escape.window="open = false"
                         :aria-expanded="open ? 'true' : 'false'">
                     <span class="al-truncate" x-text="selectedCauserText || 'All users'"></span>
@@ -169,11 +169,13 @@
                 <div x-show="open"
                      x-cloak
                      x-transition.opacity.duration.120ms
+                     @click.outside="open = false"
                      class="al-card"
                      style="position:absolute;left:0;right:0;top:calc(100% + .375rem);box-shadow:var(--shadow);z-index:20">
                     <div style="padding:.375rem;border-bottom:1px solid var(--border)">
                         <input type="search"
                                class="al-input"
+                               aria-label="Search users"
                                x-ref="causerSearch"
                                placeholder="Search users…"
                                x-model="causerSearch"

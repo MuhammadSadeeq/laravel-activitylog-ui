@@ -23,7 +23,7 @@
          whole document sideways. Below 60rem the rows become blocks instead
          (see .al-table in the stylesheet), because six columns cannot be read
          on a phone however far you scroll. --}}
-    <div class="al-table-wrap al-scroll" x-show="!loadError && activities.length > 0" x-cloak>
+    <div class="al-table-wrap al-scroll al-card--clip" x-show="!loadError && activities.length > 0" x-cloak>
         <table class="al-table">
             {{-- Four columns, not six. Subject had been repeating whatever the
                  description column fell back to, and a per-row button column
@@ -51,13 +51,13 @@
                     </tr>
 
                     <template x-for="activity in group.items" :key="activity.id">
-                        <tr class="al-rowlink"
-                            tabindex="0"
-                            role="button"
-                            :aria-label="`Details for ${activity.event || 'activity'} ${activity.id}`"
-                            @click="showActivityDetail(activity)"
-                            @keydown.enter.prevent="showActivityDetail(activity)"
-                            @keydown.space.prevent="showActivityDetail(activity)">
+                        {{-- No role="button" here. It replaced the row in the
+                             accessibility tree, so 25 rows and 100 cells stopped
+                             being a table and became 25 unlabelled buttons. The
+                             row still opens the detail panel on click for the
+                             mouse; the keyboard path is the real button in the
+                             Record cell below. --}}
+                        <tr class="al-rowlink" @click="showActivityDetail(activity)">
                             <td data-cell="Event">
                                 {{-- The tint already carries the meaning; a dot
                                      inside a coloured pill said it twice. --}}
@@ -72,7 +72,11 @@
                                  already said — on a stock Spatie install it is
                                  just the event name again. --}}
                             <td data-cell="Record">
-                                <div class="al-cell-primary al-truncate" x-text="window.ActivitylogUi.recordLabel(activity)"></div>
+                                <button type="button"
+                                        class="al-recordlink al-cell-primary al-truncate"
+                                        @click.stop="showActivityDetail(activity)"
+                                        :aria-label="`Show detail for ${window.ActivitylogUi.recordLabel(activity)}`"
+                                        x-text="window.ActivitylogUi.recordLabel(activity)"></button>
                                 <div class="al-cell-secondary al-truncate"
                                      x-show="window.ActivitylogUi.extraDescription(activity)"
                                      :title="activity.description"
@@ -83,8 +87,8 @@
                                  for every row one person caused, which is decoration
                                  standing where information should be. --}}
                             <td data-cell="User">
-                                <span class="al-truncate" x-show="activity.causer_type" x-text="activity.causer_name || 'Unknown'"></span>
-                                <span class="al-muted" x-show="!activity.causer_type">System</span>
+                                <span class="al-truncate" x-show="activity.causer_type" :title="activity.causer_name" x-text="activity.causer_name || 'Unknown'"></span>
+                                <span class="al-muted al-truncate" x-show="!activity.causer_type">System</span>
                             </td>
 
                             <td data-cell="Time" class="al-table__num">

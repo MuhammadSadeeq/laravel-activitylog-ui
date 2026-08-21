@@ -19,6 +19,8 @@
 /* ---------------------------------------------------------------- tokens -- */
 
 :root {
+    color-scheme: light;
+
     /* Neutrals carry a slight warm bias, so the greys read as chosen rather
        than as the browser default. */
     --ground: #f4f4f2;
@@ -28,11 +30,11 @@
     --surface-hover: #f7f7f5;
 
     --border: #e4e3df;
-    --border-strong: #cecdc7;
+    --border-strong: #b4b2aa;
 
     --ink: #1b1b19;
     --ink-muted: #64635e;
-    --ink-faint: #8f8e88;
+    --ink-faint: #6e6d67;
     --ink-inverse: #fbfbfa;
 
     /* The accent is near-neutral on purpose: the interface should not compete
@@ -92,6 +94,8 @@
 }
 
 html.dark {
+    color-scheme: dark;
+
     /* The first pass put ground and surface within a few percent of each other,
        so nothing read as a card and the borders disappeared. Widened. */
     --ground: #0b0c0e;
@@ -101,11 +105,11 @@ html.dark {
     --surface-hover: #1f2228;
 
     --border: #262a31;
-    --border-strong: #363b44;
+    --border-strong: #4a5058;
 
     --ink: #ececeb;
     --ink-muted: #a3a29c;
-    --ink-faint: #74736e;
+    --ink-faint: #8d8c86;
     --ink-inverse: #17181a;
 
     --accent: #ececeb;
@@ -387,8 +391,11 @@ html.dark .al-select {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    overflow: hidden;
 }
+
+/* Only where content must be held inside the rounded corners — a table, not a
+   panel that opens menus. Clipping every card hid the user list entirely. */
+.al-card--clip { overflow: hidden; }
 
 .al-card__header {
     display: flex;
@@ -515,6 +522,13 @@ html.dark .al-select {
     .al-table td[data-cell="Event"]::before { display: none; }
     .al-table td[data-cell="Time"] { grid-column: 2; grid-row: 1; text-align: right; }
     .al-table td[data-cell="Time"]::before { display: none; }
+    .al-table tr.al-daybreak {
+        display: block;
+        padding: 0.625rem 1rem 0.25rem;
+        border-bottom: 0;
+    }
+    .al-table tr.al-daybreak td { display: block; padding: 0; }
+
     .al-table td[data-cell="Record"] { grid-column: 1 / -1; }
     .al-table td[data-cell="User"] { grid-column: 1 / -1; }
     .al-table td.al-table__actions { grid-column: 1 / -1; text-align: left; }
@@ -540,6 +554,19 @@ html.dark .al-select {
     outline: 2px solid var(--focus);
     outline-offset: -2px;
 }
+.al-recordlink {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+.al-recordlink:hover { text-decoration: underline; text-underline-offset: 2px; }
+
 .al-rowlink__chevron { color: transparent; transition: color .12s ease; }
 .al-table tbody tr.al-rowlink:hover .al-rowlink__chevron,
 .al-table tbody tr.al-rowlink:focus-visible .al-rowlink__chevron { color: var(--ink-faint); }
@@ -816,7 +843,13 @@ html.al-scroll-locked, html.al-scroll-locked body { overflow: hidden; }
 
 .al-bars { display: grid; gap: 0.5rem; }
 .al-bar__head { display: flex; justify-content: space-between; gap: 0.5rem; font-size: var(--step--1); }
-.al-bar__track { height: 0.375rem; border-radius: var(--radius-full); background: var(--surface-sunken); overflow: hidden; }
+.al-bar__track {
+    height: 0.375rem;
+    border-radius: var(--radius-full);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
 .al-bar__fill { height: 100%; border-radius: var(--radius-full); background: var(--event-neutral); transition: width .3s ease; }
 .al-bar__fill[data-event="created"]  { background: var(--event-created); }
 .al-bar__fill[data-event="updated"]  { background: var(--event-updated); }
@@ -834,7 +867,15 @@ html.al-scroll-locked, html.al-scroll-locked body { overflow: hidden; }
 .al-row--between { justify-content: space-between; }
 .al-row--wrap { flex-wrap: wrap; }
 
-.al-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-truncate {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+/* For the cases that genuinely need to sit in a line of text. */
+.al-truncate-inline { display: inline-block; max-width: 100%; vertical-align: bottom; }
 .al-break { overflow-wrap: anywhere; }
 .al-muted { color: var(--ink-muted); }
 .al-faint { color: var(--ink-faint); }
@@ -843,6 +884,8 @@ html.al-scroll-locked, html.al-scroll-locked body { overflow: hidden; }
 .al-truncate-block { display: block; }
 @media (max-width: 39.999rem) { .al-hide-sm { display: none !important; } }
 @media (min-width: 40rem) { .al-only-sm { display: none !important; } }
+
+.al-contents { display: contents; }
 
 /* ---------------------------------------------------------------- motion -- */
 

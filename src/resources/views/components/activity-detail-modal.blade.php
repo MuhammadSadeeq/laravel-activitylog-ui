@@ -3,11 +3,12 @@
      @keydown.escape.window="open = false"
      x-show="open"
      x-cloak
-     x-effect="window.ActivitylogUi.lockScroll(open)"
+     x-effect="window.ActivitylogUi.lockScroll(open); window.ActivitylogUi.trapFocus($refs.panel, open)"
+     @keydown.tab="window.ActivitylogUi.keepTabInside($event, $refs.panel)"
      class="al-dialog">
     <div class="al-dialog__backdrop" @click="open = false"></div>
 
-    <div class="al-dialog__panel al-dialog__panel--wide"
+    <div x-ref="panel" class="al-dialog__panel al-dialog__panel--wide"
          role="dialog"
          aria-modal="true"
          aria-labelledby="al-detail-title">

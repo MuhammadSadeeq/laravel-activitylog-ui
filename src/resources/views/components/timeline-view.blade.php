@@ -77,8 +77,13 @@
                                                  return null;
                                              }
                                          }"
-                                         x-show="changes"
-                                         style="display:contents">
+                                         {{-- The class, not an inline style:
+                                              x-show removes the inline display
+                                              property when it shows an element,
+                                              which took display:contents with
+                                              it and broke the row layout. --}}
+                                         class="al-contents"
+                                         x-show="changes">
                                         <button type="button"
                                                 class="al-btn al-btn--ghost al-btn--sm"
                                                 @click="expanded = !expanded"

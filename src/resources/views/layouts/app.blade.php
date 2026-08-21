@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <meta name="color-scheme" content="light dark">
 
     <title>@yield('title') - {{ config('activitylog-ui.ui.brand', 'ActivityLog UI') }}</title>
 
@@ -26,7 +25,7 @@
         The typeface is the system stack for the same reason: no webfont
         request, no swap, and it looks native wherever it runs.
     --}}
-    <link rel="stylesheet" href="{{ route('activitylog-ui.assets.css') }}">
+    <link rel="stylesheet" href="{{ route('activitylog-ui.assets.css', ['version' => \MuhammadSadeeq\ActivitylogUi\Http\Controllers\AssetController::version()]) }}">
 
     <script>
         // Applied before first paint so the page never flashes light then dark.
@@ -100,12 +99,28 @@
                     causerSearch: '',
                     selectedCauser: null,
 
+                    // The saved view awaiting a delete confirmation. Declared
+                    // here rather than spread over this object in the template:
+                    // spreading evaluates the getters below once and freezes
+                    // them, which silently broke hasActiveFilters and
+                    // selectedCauserText.
+                    pendingDelete: null,
+
                     // Initialization
                     async init() {
                         if (this.initialized) return;
 
                         // init state
                         this.filters = this.defaultFilters();
+
+                        // Crossing the sidebar breakpoint re-opens the panel.
+                        // Without this, widening a window while it is collapsed
+                        // hides the only control that could reopen it.
+                        if (window.matchMedia) {
+                            const wide = window.matchMedia('(min-width: 64rem)');
+                            const sync = event => { if (event.matches) this.expanded = true; };
+                            wide.addEventListener ? wide.addEventListener('change', sync) : wide.addListener(sync);
+                        }
                         
                         this.initialized = true;
 
@@ -858,7 +873,87 @@
              * save-view dialog behind it, and the first one to close must not
              * unlock the page while another is still up.
              */
+            /**
+             * Whether a filter entry actually narrows anything.
+             *
+             * The dialogs treated any present key as an applied filter, so a
+             * default date_preset of 'all' — which the panel always sets —
+             * counted, and the "this exports the entire log" warning could
+             * never appear.
+             */
+            isRealFilter(key, value) {
+                if (value === null || value === undefined || value === '') return false;
+                if (Array.isArray(value) && value.length === 0) return false;
+                if (key === 'date_preset' && value === 'all') return false;
+
+                return true;
+            },
+
+            hasRealFilters(filters) {
+                return Object.entries(filters || {}).some(([key, value]) => this.isRealFilter(key, value));
+            },
+
             _scrollLocks: 0,
+            _focusReturn: [],
+
+            /**
+             * Moves focus into a dialog, keeps Tab inside it, and puts focus
+             * back where it came from on close. Without this a keyboard user
+             * opens the detail panel and carries on tabbing the table behind
+             * it, with no way to reach the dialog's own controls.
+             */
+            trapFocus(panel, open) {
+                if (!panel) {
+                    return;
+                }
+
+                if (open) {
+                    this._focusReturn.push(document.activeElement);
+
+                    requestAnimationFrame(() => {
+                        const first = panel.querySelector('[autofocus]') || this.tabbable(panel)[0] || panel;
+                        first.focus?.();
+                    });
+
+                    return;
+                }
+
+                const previous = this._focusReturn.pop();
+
+                if (previous && document.contains(previous)) {
+                    previous.focus?.();
+                }
+            },
+
+            tabbable(root) {
+                return Array.from(root.querySelectorAll(
+                    'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+                )).filter(el => el.offsetParent !== null || el === document.activeElement);
+            },
+
+            /** Wrap Tab at the ends of a dialog. */
+            keepTabInside(event, panel) {
+                if (event.key !== 'Tab' || !panel) {
+                    return;
+                }
+
+                const items = this.tabbable(panel);
+
+                if (items.length === 0) {
+                    return;
+                }
+
+                const first = items[0];
+                const last = items[items.length - 1];
+
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            },
 
             lockScroll(locked) {
                 this._scrollLocks = Math.max(0, this._scrollLocks + (locked ? 1 : -1));

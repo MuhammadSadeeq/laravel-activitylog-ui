@@ -38,7 +38,9 @@ $domain = $config['domain'] ?? null;
 // Outside the protected group on purpose. A guest is redirected to the host's
 // login page, and a stylesheet that 401s would leave that page unstyled — and
 // it is a stylesheet, so there is nothing to protect.
-Route::get($prefix . '/assets/activitylog-ui.css', [AssetController::class, 'stylesheet'])
+// The version is part of the path, so an upgraded package is a new URL and the
+// year-long immutable cache cannot serve the previous release's stylesheet.
+Route::get($prefix . '/assets/{version}/activitylog-ui.css', [AssetController::class, 'stylesheet'])
     ->name($name . 'assets.css')
     ->domain($domain);
 

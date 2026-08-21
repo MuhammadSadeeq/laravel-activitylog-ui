@@ -11,11 +11,12 @@
      @keydown.escape.window="open = false"
      x-show="open"
      x-cloak
-     x-effect="window.ActivitylogUi.lockScroll(open)"
+     x-effect="window.ActivitylogUi.lockScroll(open); window.ActivitylogUi.trapFocus($refs.panel, open)"
+     @keydown.tab="window.ActivitylogUi.keepTabInside($event, $refs.panel)"
      class="al-dialog">
     <div class="al-dialog__backdrop" @click="open = false"></div>
 
-    <div class="al-dialog__panel"
+    <div x-ref="panel" class="al-dialog__panel"
          style="max-width:30rem"
          role="dialog"
          aria-modal="true"
@@ -31,12 +32,11 @@
             {{-- Filters first, and stated plainly. Exporting the whole log by
                  accident is the expensive mistake here, so the panel says which
                  it will be before offering a format. --}}
-            <div x-show="Object.values(currentFilters).some(v => v !== null && v !== '' && !(Array.isArray(v) && v.length === 0))">
+            <div x-show="window.ActivitylogUi.hasRealFilters(currentFilters)">
                 <p class="al-label" style="margin-bottom:.375rem">Filters applied</p>
                 <div class="al-row al-row--wrap" style="gap:.25rem">
                     <template x-for="[key, value] in Object.entries(currentFilters)" :key="key">
-                        <span class="al-chip"
-                              x-show="value !== null && value !== '' && !(Array.isArray(value) && value.length === 0)">
+                        <span class="al-chip" x-show="window.ActivitylogUi.isRealFilter(key, value)">
                             <span class="al-faint" x-text="key.replace(/_/g, ' ')"></span>
                             <span class="al-chip__text" x-text="Array.isArray(value) ? value.join(', ') : value"></span>
                         </span>
@@ -44,8 +44,7 @@
                 </div>
             </div>
 
-            <div class="al-note al-note--warning"
-                 x-show="!Object.values(currentFilters).some(v => v !== null && v !== '' && !(Array.isArray(v) && v.length === 0))">
+            <div class="al-note al-note--warning" x-show="!window.ActivitylogUi.hasRealFilters(currentFilters)">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="margin-top:.125rem">
                     <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
                 </svg>
