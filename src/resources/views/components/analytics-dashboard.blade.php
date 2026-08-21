@@ -57,7 +57,7 @@
         <div class="al-stat">
             <p class="al-stat__label">This week</p>
             <p class="al-stat__value" x-text="Number(stats.activities_this_week || 0).toLocaleString()"></p>
-            <p class="al-stat__note">last 7 days</p>
+            <p class="al-stat__note">since Monday</p>
         </div>
         <div class="al-stat">
             <p class="al-stat__label">This month</p>
@@ -421,7 +421,19 @@ document.addEventListener('alpine:init', () => {
                         },
                     },
                     scales: {
-                        x: { grid: { display: false }, ticks: { color: ink, maxRotation: 0, autoSkipPadding: 24 }, border: { color: grid } },
+                        x: {
+                            grid: { display: false },
+                            border: { color: grid },
+                            ticks: {
+                                color: ink,
+                                maxRotation: 0,
+                                autoSkipPadding: 24,
+                                // The rest of the page never shows a raw ISO date.
+                                callback(value) {
+                                    return window.ActivitylogUi.formatDate(this.getLabelForValue(value));
+                                },
+                            },
+                        },
                         y: { beginAtZero: true, grid: { color: grid }, ticks: { color: ink, precision: 0 }, border: { display: false } },
                     },
                 }

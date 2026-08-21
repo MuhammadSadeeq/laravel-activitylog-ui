@@ -41,7 +41,6 @@
     </script>
 
     <!-- Alpine.js -->
-    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
     <!-- Global Alpine.js Functions -->
@@ -62,7 +61,6 @@
                     expanded: typeof window !== 'undefined' && window.matchMedia
                         ? window.matchMedia('(min-width: 64rem)').matches
                         : true,
-                    showAdvanced: false,
 
                     defaultFilters() {
                         return {
@@ -495,130 +493,14 @@
                     }
                     @endif
                 }
-            },
-
-            // Analytics Dashboard Component
-            analyticsDashboard() {
-                return {
-                    // Initialization state
-                    initialized: false,
-
-                    loading: true,
-                    stats: {},
-                    eventTypes: [],
-                    topUsers: [],
-                    timeline: [],
-
-                    // Period selection
-                    selectedPeriod: '7',
-
-                    // Filter state
-                    currentFilters: {},
-                    hasActiveFilters: false,
-
-                    init() {
-                        // Prevent multiple initializations
-                        if (this.initialized) return;
-                        this.initialized = true;
-
-                        this.loadAnalytics();
-                    },
-
-                    async loadAnalytics(filters = {}) {
-                        this.loading = true;
-
-                        // Update filter state
-                        this.currentFilters = filters;
-                        this.hasActiveFilters = Object.keys(filters).some(key => {
-                            const value = filters[key];
-                            return value !== '' && value !== null && value !== undefined &&
-                                   (Array.isArray(value) ? value.length > 0 : true) &&
-                                   !(key === 'date_preset' && value === 'all');
-                        });
-
-                        try {
-                            // Build URL with filters
-                            const params = new URLSearchParams();
-
-                            // Add filters to URL parameters
-                            Object.keys(filters).forEach(key => {
-                                const value = filters[key];
-                                if (value !== null && value !== '' && value !== undefined) {
-                                    if (Array.isArray(value)) {
-                                        value.forEach(item => params.append(`${key}[]`, item));
-                                    } else {
-                                        params.append(key, value);
-                                    }
-                                }
-                            });
-
-                            const url = '{{ route("activitylog-ui.api.analytics") }}' + (params.toString() ? '?' + params.toString() : '');
-
-                            const response = await fetch(url, {
-                                method: 'GET',
-                                headers: {
-                                    'Accept': 'application/json',
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-                                }
-                            });
-
-                            const result = await window.ActivitylogUi.parseJsonResponse(response, 'Loading analytics');
-                            const data = result.data || {};
-
-                            this.stats = data.stats || {
-                                total: '0',
-                                today: '0',
-                                active_users: '0',
-                                this_week: '0'
-                            };
-
-                            this.eventTypes = data.event_types || [];
-                            this.topUsers = data.top_users || [];
-                            this.timeline = data.timeline || [];
-                        } catch (error) {
-                            console.error('Error loading analytics:', error);
-                            // Fallback to mock data
-                            this.stats = {
-                                total: '12,543',
-                                today: '127',
-                                active_users: '45',
-                                this_week: '1,234'
-                            };
-
-                            this.eventTypes = [
-                                { name: 'created', count: 150, percentage: 35 },
-                                { name: 'updated', count: 200, percentage: 47 },
-                                { name: 'deleted', count: 50, percentage: 12 },
-                                { name: 'restored', count: 25, percentage: 6 }
-                            ];
-
-                            this.topUsers = [
-                                { id: 1, name: 'John Doe', email: 'john@example.com', activity_count: 45 },
-                                { id: 2, name: 'Jane Smith', email: 'jane@example.com', activity_count: 38 },
-                                { id: 3, name: 'Bob Johnson', email: 'bob@example.com', activity_count: 29 }
-                            ];
-
-                            this.timeline = [
-                                { date: '2024-01-15', day_name: 'Monday', count: 85, percentage: 70 },
-                                { date: '2024-01-14', day_name: 'Sunday', count: 45, percentage: 37 },
-                                { date: '2024-01-13', day_name: 'Saturday', count: 120, percentage: 100 },
-                                { date: '2024-01-12', day_name: 'Friday', count: 95, percentage: 79 },
-                                { date: '2024-01-11', day_name: 'Thursday', count: 110, percentage: 92 },
-                                { date: '2024-01-10', day_name: 'Wednesday', count: 88, percentage: 73 },
-                                { date: '2024-01-09', day_name: 'Tuesday', count: 75, percentage: 63 }
-                            ];
-                        } finally {
-                            this.loading = false;
-                        }
-                    }
-                }
             }
         };
 
-        // Make components globally available
+        // Make components globally available. The analytics view registers its
+        // own component with Alpine.data('analyticsData'); the copy that used to
+        // live here was never referenced by any template and returned hard-coded
+        // rows for "John Doe" and dates in 2024.
         window.filterPanel = () => window.AlpineComponents.filterPanel();
-        window.analyticsDashboard = () => window.AlpineComponents.analyticsDashboard();
 
         // Dynamic Activity Type Styling System
         /**
@@ -1326,7 +1208,7 @@
                             @click.away="open = false"
                             @keydown.escape.window="open = false"
                             :aria-expanded="open ? 'true' : 'false'"
-                            aria-haspopup="menu">
+                            aria-label="Account menu">
                         <span class="al-user__name al-hide-sm">{{ auth()->user()->name ?? auth()->user()->email }}</span>
                         <span class="al-avatar" aria-hidden="true">{{ strtoupper(substr(auth()->user()->name ?? auth()->user()->email ?? '?', 0, 1)) }}</span>
                     </button>
@@ -1334,7 +1216,6 @@
                     <div x-show="open"
                          x-cloak
                          x-transition.opacity.duration.120ms
-                         role="menu"
                          class="al-card"
                          style="position:absolute;right:0;top:calc(100% + .375rem);width:15rem;box-shadow:var(--shadow);z-index:40">
                         <div style="padding:.625rem .75rem;border-bottom:1px solid var(--border)">
@@ -1347,7 +1228,7 @@
                                  RouteNotFoundException that took the whole page down. --}}
                             <form method="POST" action="{{ route('logout') }}" style="padding:.375rem">
                                 @csrf
-                                <button type="submit" class="al-btn al-btn--ghost al-btn--block" role="menuitem" style="justify-content:flex-start">
+                                <button type="submit" class="al-btn al-btn--ghost al-btn--block" style="justify-content:flex-start">
                                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
                                     </svg>
@@ -1368,7 +1249,9 @@
     </main>
 </div>
 
-<div x-data="notifications()" x-init="init()" class="al-toasts" role="status" aria-live="polite">
+{{-- aria-atomic="false": role="status" is atomic by default, so adding a
+     third toast made a screen reader re-announce all three from the top. --}}
+<div x-data="notifications()" x-init="init()" class="al-toasts" role="status" aria-live="polite" aria-atomic="false">
     <template x-for="notification in notifications" :key="notification.id">
         <div x-show="notification.show"
              x-transition.opacity.duration.150ms

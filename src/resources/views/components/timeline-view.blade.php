@@ -2,11 +2,7 @@
     <div class="al-card__header">
         <div class="al-grow">
             <h3 class="al-card__title">Timeline</h3>
-            <p class="al-card__meta">
-                Newest first ·
-                <span x-text="activities.length.toLocaleString()"></span> of
-                <span x-text="totalActivities.toLocaleString()"></span> shown
-            </p>
+            <p class="al-card__meta">Newest first</p>
         </div>
 
         <div class="al-row">
@@ -43,7 +39,14 @@
                                         <span class="al-badge__label" x-text="activity.event || 'unknown'"></span>
                                     </span>
 
-                                    <span class="al-cell-primary al-truncate" x-text="window.ActivitylogUi.recordLabel(activity)"></span>
+                                    {{-- The same affordance as the table: the
+                                         record label opens the detail panel. --}}
+                                    <button type="button"
+                                            class="al-recordlink al-cell-primary"
+                                            style="width:auto"
+                                            @click="showActivityDetail(activity)"
+                                            :aria-label="`Show detail for ${window.ActivitylogUi.recordLabel(activity)}`"
+                                            x-text="window.ActivitylogUi.recordLabel(activity)"></button>
 
                                     <span class="al-grow"></span>
 
@@ -115,11 +118,6 @@
                                         </div>
                                     </div>
 
-                                    <span class="al-grow"></span>
-
-                                    <button type="button" class="al-btn al-btn--ghost al-btn--sm" @click="showActivityDetail(activity)">
-                                        Details
-                                    </button>
                                 </div>
                             </article>
                         </template>

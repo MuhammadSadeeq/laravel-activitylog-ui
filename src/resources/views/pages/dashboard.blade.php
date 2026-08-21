@@ -12,7 +12,10 @@
     <div class="al-toolbar">
         <div class="al-toolbar__grow al-row" style="gap:.625rem">
             <h1 style="font-size:var(--step-3)">{{ config('activitylog-ui.ui.title', 'Activity Log') }}</h1>
-            <span class="al-chip tnum" x-show="hasLoaded && !loadError" x-cloak>
+            <span class="al-chip tnum"
+                  x-show="hasLoaded && !loadError"
+                  x-cloak
+                  :aria-label="totalActivities.toLocaleString() + (totalActivities === 1 ? ' activity' : ' activities') + (hasActiveFilters ? ' matching the filters' : '')">
                 <span class="al-chip__text" x-text="totalActivities.toLocaleString()"></span>
             </span>
         </div>
@@ -59,6 +62,10 @@
         @endif
     </div>
 
+    {{-- Filtering, searching and paging all replace the table's contents with
+         no visible message, so a screen reader was given nothing at all. --}}
+    <p class="al-visually-hidden" role="status" aria-live="polite" x-text="statusMessage"></p>
+
     <div class="al-layout" :class="currentView === 'analytics' ? '' : 'al-layout--with-sidebar'">
         <div x-show="currentView !== 'analytics'" x-cloak>
             @include('activitylog-ui::components.filter-panel')
@@ -80,13 +87,25 @@
                 <span class="al-visually-hidden" role="status">Loading activities…</span>
             </div>
 
-            <div x-show="currentView === 'table' && !loading && hasLoaded" x-cloak>
-                @include('activitylog-ui::components.table-view')
-            </div>
+            {{-- x-if, not x-show: with x-show both lists stay in the DOM and
+                 Alpine re-renders the hidden one on every state change, so most
+                 of the work behind a table update went into building a timeline
+                 nobody was looking at. x-if tears the inactive one down.
 
-            <div x-show="currentView === 'timeline' && !loading && hasLoaded" x-cloak>
-                @include('activitylog-ui::components.timeline-view')
-            </div>
+                 Analytics stays on x-show below because it owns its own
+                 component state — destroying it would refetch on every switch
+                 back. --}}
+            <template x-if="currentView === 'table' && !loading && hasLoaded">
+                <div>
+                    @include('activitylog-ui::components.table-view')
+                </div>
+            </template>
+
+            <template x-if="currentView === 'timeline' && !loading && hasLoaded">
+                <div>
+                    @include('activitylog-ui::components.timeline-view')
+                </div>
+            </template>
 
             @if(config('activitylog-ui.features.analytics', true))
             <div x-show="currentView === 'analytics'" x-cloak>
@@ -324,6 +343,16 @@ function activityDashboard() {
          * Activities bucketed by calendar day, so the table can state a date
          * once per group instead of repeating it on every row.
          */
+        /** Announced to assistive technology after every load. */
+        get statusMessage() {
+            if (this.loading || !this.hasLoaded) return 'Loading activities';
+            if (this.loadError) return 'Activities could not be loaded';
+            if (this.activities.length === 0) return 'No activities match the current filters';
+
+            return `${this.totalActivities.toLocaleString()} ${this.totalActivities === 1 ? 'activity' : 'activities'}`
+                + `, showing page ${this.currentPage} of ${this.totalPages}`;
+        },
+
         get groupedActivities() {
             const groups = [];
 

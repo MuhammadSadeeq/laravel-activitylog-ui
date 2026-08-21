@@ -137,10 +137,15 @@
              a getPageNumbers() helper whose result was never used. --}}
         <div class="al-pagination"
              x-data="{
+                 jumpTo: '',
+
                  get pages() {
                      const total = totalPages;
                      const current = currentPage;
-                     const span = window.innerWidth < 640 ? 1 : 2;
+                     // Fixed, not measured: reading window.innerWidth here is not
+                     // reactive, so the control kept whatever width it saw first
+                     // and never updated on resize or rotation.
+                     const span = 2;
                      const out = [];
                      const push = p => { if (!out.includes(p)) out.push(p); };
 
@@ -153,9 +158,22 @@
                      return out;
                  }
              }">
-            <p class="al-small al-muted">
-                Page <span x-text="currentPage"></span> of <span x-text="totalPages.toLocaleString()"></span>
-            </p>
+            {{-- With 186 pages, first/last plus two either side cannot reach the
+                 middle. The old design had a "go to page" box; removing it made
+                 most of the log unreachable except by repeated clicking. --}}
+            <form class="al-row" style="gap:.375rem"
+                  @submit.prevent="const n = parseInt(jumpTo, 10); if (n >= 1 && n <= totalPages) { changePage(n); jumpTo = '' }">
+                <label class="al-small al-muted" for="al-page-jump">Page</label>
+                <input id="al-page-jump"
+                       type="number"
+                       class="al-input tnum"
+                       style="width:5rem"
+                       min="1"
+                       :max="totalPages"
+                       :placeholder="currentPage"
+                       x-model="jumpTo">
+                <span class="al-small al-muted">of <span x-text="totalPages.toLocaleString()"></span></span>
+            </form>
 
             <nav class="al-pagination__pages" aria-label="Pagination">
                 <button type="button"

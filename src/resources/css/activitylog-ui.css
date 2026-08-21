@@ -488,7 +488,6 @@ html.dark .al-select {
 .al-table tbody tr { transition: background-color .1s ease; }
 .al-table tbody tr:hover { background: var(--surface-hover); }
 .al-table__num { text-align: right; }
-.al-table__actions { text-align: right; white-space: nowrap; }
 
 .al-cell-primary { font-weight: 500; color: var(--ink); }
 .al-cell-secondary { color: var(--ink-muted); font-size: var(--step--1); margin-top: 0.125rem; }
@@ -531,7 +530,6 @@ html.dark .al-select {
 
     .al-table td[data-cell="Record"] { grid-column: 1 / -1; }
     .al-table td[data-cell="User"] { grid-column: 1 / -1; }
-    .al-table td.al-table__actions { grid-column: 1 / -1; text-align: left; }
 }
 
 .al-table tr.al-daybreak td {
@@ -583,7 +581,6 @@ html.dark .al-select {
     width: 1px;
     background: var(--border);
 }
-.al-timeline__group + .al-timeline__group { margin-top: 1.25rem; }
 .al-timeline__date {
     position: relative;
     font-size: var(--step--1);
@@ -675,10 +672,13 @@ html.dark .al-select {
 }
 .al-segmented__btn:hover { color: var(--ink); }
 .al-segmented__btn[aria-pressed="true"] {
-    background: var(--surface);
-    color: var(--ink);
-    box-shadow: var(--shadow-sm);
+    /* Was var(--surface) on a var(--surface-sunken) track — 1.04:1, so the
+       selected view was indistinguishable from the other two. */
+    background: var(--accent);
+    color: var(--accent-ink);
+    box-shadow: none;
 }
+.al-segmented__btn[aria-pressed="true"]:hover { color: var(--accent-ink); }
 
 .al-empty { padding: 2.25rem 1.5rem; text-align: center; color: var(--ink-muted); }
 .al-empty__icon { margin: 0 auto 0.75rem; color: var(--ink-faint); }
@@ -695,7 +695,6 @@ html.dark .al-select {
     color: var(--ink-muted);
 }
 .al-note--warning { background: var(--event-restored-bg); border-color: var(--event-restored-border); color: var(--event-restored); }
-.al-note--danger { background: var(--event-deleted-bg); border-color: var(--event-deleted-border); color: var(--event-deleted); }
 
 .al-skeleton {
     background: var(--surface-sunken);
@@ -874,14 +873,11 @@ html.al-scroll-locked, html.al-scroll-locked body { overflow: hidden; }
     white-space: nowrap;
     min-width: 0;
 }
-/* For the cases that genuinely need to sit in a line of text. */
-.al-truncate-inline { display: inline-block; max-width: 100%; vertical-align: bottom; }
 .al-break { overflow-wrap: anywhere; }
 .al-muted { color: var(--ink-muted); }
 .al-faint { color: var(--ink-faint); }
 .al-small { font-size: var(--step--1); }
 .al-grow { flex: 1 1 auto; min-width: 0; }
-.al-truncate-block { display: block; }
 @media (max-width: 39.999rem) { .al-hide-sm { display: none !important; } }
 @media (min-width: 40rem) { .al-only-sm { display: none !important; } }
 
