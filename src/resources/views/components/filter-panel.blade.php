@@ -220,9 +220,18 @@
         </div>
     </div>
 
-    <div x-show="pendingDelete" x-cloak x-effect="window.ActivitylogUi.lockScroll(!!pendingDelete)" class="al-dialog" @keydown.escape.window="pendingDelete = null">
+    {{-- aria-modal="true" tells a screen reader nothing outside this panel
+         exists. Without a trap the keyboard disagreed: Tab walked straight out
+         into the filter fields behind it, which the reader was no longer
+         announcing. The other three dialogs already use these helpers. --}}
+    <div x-show="pendingDelete"
+         x-cloak
+         x-effect="window.ActivitylogUi.lockScroll(!!pendingDelete); window.ActivitylogUi.trapFocus($refs.deleteViewPanel, !!pendingDelete)"
+         @keydown.tab="window.ActivitylogUi.keepTabInside($event, $refs.deleteViewPanel)"
+         @keydown.escape.window="pendingDelete = null"
+         class="al-dialog">
         <div class="al-dialog__backdrop" @click="pendingDelete = null"></div>
-        <div class="al-dialog__panel" style="max-width:24rem" role="dialog" aria-modal="true" aria-labelledby="al-delete-view-title">
+        <div x-ref="deleteViewPanel" class="al-dialog__panel" style="max-width:24rem" role="dialog" aria-modal="true" aria-labelledby="al-delete-view-title">
             <div class="al-dialog__header">
                 <div>
                     <h3 id="al-delete-view-title" class="al-card__title">Delete this view?</h3>

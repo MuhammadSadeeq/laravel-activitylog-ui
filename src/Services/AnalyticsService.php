@@ -501,6 +501,10 @@ class AnalyticsService
 
             $colors = config('activitylog-ui.analytics.chart_colors', []);
             $chartData[] = [
+                // The raw event name as well as the readable one: the chart
+                // colours each line by which event it is, and cannot do that
+                // from a label that has already been prettied up.
+                'event' => (string) $eventType,
                 // Snake_case is how applications log; it is not how a chart
                 // legend should read.
                 'label' => ucfirst(str_replace('_', ' ', (string) $eventType)),
@@ -526,6 +530,7 @@ class AnalyticsService
             }
 
             $chartData[] = [
+                'event' => null,
                 'label' => sprintf('Other (%d more)', count($remainder)),
                 'data' => $otherData,
                 'color' => '#6b7280',

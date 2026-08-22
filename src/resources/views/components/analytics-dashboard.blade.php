@@ -196,7 +196,16 @@
 
 <script>
 document.addEventListener('alpine:init', () => {
-    Alpine.data('analyticsData', () => ({
+    Alpine.data('analyticsData', () => {
+    // Deliberately not a property on the returned object. Alpine makes that
+    // object reactive, so the Chart would be handed back through a Proxy —
+    // and Chart.js identifies instances by reference, both in its own registry
+    // and in the animation loop it keeps running. destroy() called on the Proxy
+    // left that loop holding the real instance, so every re-render added
+    // another one drawing to a canvas that had moved on.
+    let chart = null;
+
+    return ({
         stats: {},
         eventTypes: [],
         topUsers: [],
@@ -207,7 +216,6 @@ document.addEventListener('alpine:init', () => {
         selectedPeriod: 'today',
         customStartDate: '',
         customEndDate: '',
-        chart: null,
         chartReady: false,
         chartError: false,
 
@@ -247,6 +255,10 @@ document.addEventListener('alpine:init', () => {
         // component's own period selection.
         dashboardFilters: {},
         hasLoaded: false,
+        // The query that produced what is currently on screen. Compared against
+        // the query the current selection would make, so returning to this view
+        // can tell "already showing this" from "showing something else".
+        loadedQuery: null,
 
         init() {
             // This component is rendered on every page load, not just the
@@ -257,7 +269,11 @@ document.addEventListener('alpine:init', () => {
             }
 
             this.$watch('currentView', view => {
-                if (view === 'analytics' && !this.hasLoaded) {
+                // Not `if (!hasLoaded)`. Filters changed while the table was on
+                // screen were recorded but not fetched, and coming back here
+                // then counted as already loaded — so the panel said one thing
+                // and every figure on the page still described another.
+                if (view === 'analytics' && this.loadedQuery !== this.analyticsQuery()) {
                     this.loadAnalytics();
                 }
             });
@@ -280,43 +296,59 @@ document.addEventListener('alpine:init', () => {
             // built, so a theme toggle otherwise left the previous theme's
             // axis labels and grid on the canvas.
             this.$watch('$store.darkMode.on', () => {
-                if (this.chart && this.hasTrendData) {
+                if (chart && this.hasTrendData) {
                     this.renderTrendsChart();
                 }
             });
         },
 
+        /**
+         * The query string this component's current selection asks for.
+         *
+         * One place, because it is both what gets requested and what identifies
+         * what is on screen; two copies of this logic would eventually disagree
+         * and the staleness check would pass while the data was wrong.
+         */
+        analyticsQuery() {
+            const params = new URLSearchParams();
+
+            // Filter-panel selections first, so analytics reflects the same
+            // slice of the log as the table and timeline. Dates are excluded:
+            // this component has its own period control, and the endpoint
+            // ignores `period` whenever start_date/end_date are present, so
+            // forwarding them silently made the period pills inert.
+            Object.entries(this.dashboardFilters || {}).forEach(([key, value]) => {
+                if (key === 'start_date' || key === 'end_date' || key === 'date_preset') return;
+                if (value === null || value === undefined || value === '') return;
+                if (Array.isArray(value)) {
+                    value.forEach(item => params.append(`${key}[]`, item));
+                } else {
+                    params.append(key, value);
+                }
+            });
+
+            if (this.selectedPeriod === 'custom') {
+                if (this.customStartDate) params.append('start_date', this.customStartDate);
+                if (this.customEndDate) params.append('end_date', this.customEndDate);
+            } else {
+                params.append('period', this.selectedPeriod);
+            }
+
+            // Sorted, so the same selection is the same string regardless of the
+            // order the filter panel happened to emit its keys in.
+            params.sort();
+
+            return params.toString();
+        },
+
         async loadAnalytics() {
+            const query = this.analyticsQuery();
+
             try {
                 this.loading = true;
                 let url = '{{ route("activitylog-ui.api.analytics") }}';
-                let params = new URLSearchParams();
 
-                // Filter-panel selections first, so analytics reflects the same
-                // slice of the log as the table and timeline. Dates are excluded:
-                // this component has its own period control, and the endpoint
-                // ignores `period` whenever start_date/end_date are present, so
-                // forwarding them silently made the period pills inert.
-                Object.entries(this.dashboardFilters || {}).forEach(([key, value]) => {
-                    if (key === 'start_date' || key === 'end_date' || key === 'date_preset') return;
-                    if (value === null || value === undefined || value === '') return;
-                    if (Array.isArray(value)) {
-                        value.forEach(item => params.append(`${key}[]`, item));
-                    } else {
-                        params.append(key, value);
-                    }
-                });
-
-                if (this.selectedPeriod === 'custom') {
-                    if (this.customStartDate) params.append('start_date', this.customStartDate);
-                    if (this.customEndDate) params.append('end_date', this.customEndDate);
-                } else if (this.selectedPeriod === 'today') {
-                    params.append('period', 'today');
-                } else {
-                    params.append('period', this.selectedPeriod);
-                }
-
-                const response = await fetch(`${url}?${params.toString()}`, {
+                const response = await fetch(`${url}?${query}`, {
                     method: 'GET',
                     headers: {
                         'Accept': 'application/json',
@@ -348,6 +380,7 @@ document.addEventListener('alpine:init', () => {
                     // Only a success counts as loaded, so returning to the view
                     // after a transient failure retries instead of staying blank.
                     this.hasLoaded = true;
+                    this.loadedQuery = query;
                 }
             } catch (error) {
                 console.error('Error loading analytics:', error);
@@ -403,34 +436,46 @@ document.addEventListener('alpine:init', () => {
                 return;
             }
 
-            if (this.chart) {
-                this.chart.destroy();
+            if (chart) {
+                chart.destroy();
+                chart = null;
             }
 
             const styles = getComputedStyle(document.documentElement);
             const ink = styles.getPropertyValue('--ink-muted').trim();
             const grid = styles.getPropertyValue('--border').trim();
-            const series = [
-                styles.getPropertyValue('--event-created').trim(),
-                styles.getPropertyValue('--event-updated').trim(),
-                styles.getPropertyValue('--event-deleted').trim(),
-                styles.getPropertyValue('--event-restored').trim(),
-                styles.getPropertyValue('--event-neutral').trim(),
-            ];
+
+            // Coloured by which event a line is, not by where it happens to sit
+            // in the array. Position-based colours meant the line labelled
+            // "Updated" was drawn green whenever nothing had been created in the
+            // period, while the badge for that same event two panels down stayed
+            // blue.
+            //
+            // Through the same mapping the badges, timeline markers and event
+            // bars use, so 'login' is the green the rest of the page already
+            // draws it and not a colour this one chart invented. Anything the
+            // interface has no opinion about falls back to the configured
+            // analytics.chart_colors entry, then to neutral.
+            const seriesColor = dataset => {
+                const semantic = window.ActivityTypeStyler.getEvent(dataset.event);
+                const named = semantic ? styles.getPropertyValue(`--event-${semantic}`).trim() : '';
+
+                return named || dataset.color || styles.getPropertyValue('--event-neutral').trim();
+            };
 
             this.chartReady = true;
             this.chartError = false;
 
-            this.chart = new ChartLib(canvas.getContext('2d'), {
+            chart = new ChartLib(canvas.getContext('2d'), {
                 type: 'line',
                 data: {
                     labels: this.activityTrends.dates,
                     // Series colours come from the stylesheet, so the chart
                     // matches the badges beside it and follows the theme.
-                    datasets: (this.activityTrends.datasets || []).map((dataset, index) => ({
+                    datasets: (this.activityTrends.datasets || []).map(dataset => ({
                         label: dataset.label,
                         data: dataset.data.map(point => point.count),
-                        borderColor: series[index % series.length],
+                        borderColor: seriesColor(dataset),
                         backgroundColor: 'transparent',
                         borderWidth: 1.75,
                         // A line needs two points. With pointRadius 0 a
@@ -475,11 +520,12 @@ document.addEventListener('alpine:init', () => {
 
         // Cleanup method
         destroy() {
-            if (this.chart) {
-                this.chart.destroy();
-                this.chart = null;
+            if (chart) {
+                chart.destroy();
+                chart = null;
             }
         }
-    }));
+    });
+    });
 });
 </script>
