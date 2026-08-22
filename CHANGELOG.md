@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `access.allowed_users` and `access.allowed_roles` are now actually enforced when `authorization.enabled` is `false`. The middleware that enforces them was previously only registered when authorization was enabled, so those lists had no effect at all in that combination.
 - `route.middleware` no longer replaces the authentication and access middleware; it replaces the base stack only, and the security middleware is appended afterwards.
 - `AnalyticsService::getUserActivityProfile()` returns `first_activity` and `last_activity` as ISO 8601 strings rather than Carbon instances. The default HTTP response is unchanged; direct PHP callers and applications using `Carbon::serializeUsing()` will see the difference.
+- Out-of-range and unusable request parameters now return `422` instead of being silently clamped or dropped. `per_page=999999` used to become 100 and an unusable `causer_id` became no causer filter at all, each answering `200` as though nothing had changed — and a dropped filter shows *more* of the audit log than was asked for. Affects `page`, `per_page`, `anchor_id`, `causer_id`, `subject_id`, `event_types` and the single-value filters, on the list, analytics and export endpoints. Omitted or empty parameters still use the default. See UPGRADING.md.
+- Exports are now scoped to the user who created them. Both the download and the progress endpoint refuse anyone else, and job ids are random rather than `uniqid()`. Shared export URLs will stop working across users.
+
+### Changed
+- The UI no longer loads the Tailwind Play CDN, Chart.js or a webfont at page load — roughly 630KB of third-party assets. It ships one stylesheet served on a versioned route by the package itself (about 6KB over the wire), with no build step and nothing to publish. Chart.js is fetched only when a chart is drawn.
+- The activity table was reworked for scanning: the date is a heading per day rather than a column on every row, rows are about half as tall, the record acted on is the primary line with the description beneath it only when it differs from the event, and below 960px rows stack into blocks instead of scrolling the page sideways.
+- Activity listings are ordered by `created_at` with the primary key as a tiebreak, rather than by the key alone. Backdated or imported activities previously appeared out of chronological order.
 
 ### Fixed
 - Fixed the filter option caches returning `__PHP_Incomplete_Class` and taking the dashboard down (#12). They now store plain arrays, every read is validated before use so a bad entry is discarded and rebuilt, and the keys are versioned so an upgrade cannot read what an older release wrote. Reported by [@djemmal-nour-el-islam](https://github.com/djemmal-nour-el-islam), who also identified `getEventTypesWithStyling()` as affected.
@@ -20,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `php artisan activitylog-ui:clear-cache` for clearing the filter option caches by hand.
+- `analytics.max_chart_series` — how many event types the trend chart draws before the remainder are summed into a single "Other" series. Defaults to 6.
+- `performance.filter_lock_wait` and `performance.filter_lock_ttl` — control the single-flight lock that stops every in-flight request rebuilding the filter caches at once when they expire.
 
 ## [2.0.1] - 2026-04-03
 
