@@ -208,3 +208,61 @@ the installation's mistake, not the caller's.
 The dashboard itself surfaces the message in a notification that stays until
 dismissed, so a stale filter in a user's browser storage says what is wrong
 rather than failing silently.
+
+### The pagination anchor is now a pair
+
+The activity list endpoint pins later pages to the rows that existed when page
+one was read, so activities recorded while someone reads do not push the list
+down and make page two repeat page one.
+
+That anchor used to be `anchor_id` alone. It is now `anchor_id` **and**
+`anchor_time` together, because the listing is ordered by `created_at` with the
+key only as a tiebreak, and a predicate has to match that ordering to mean
+"everything that existed then". Filtering on the key alone hid rows whenever the
+two disagreed — which is any log containing backdated or imported activities.
+
+* The shipped UI handles this itself; nothing to do if you use it.
+* If you call `/api/activities` directly, send both values back, taken from
+  `anchor_id` and `anchor_time` in the previous response. Sending one without
+  the other returns **422**.
+* `anchor_id` must now be an integer when the log's key is an integer. It was
+  previously accepted as any identifier-shaped string, which MySQL coerced to 0
+  and answered with an empty page.
+* `ActivitylogService::getActivities()` takes `?array $anchor` as its third
+  argument instead of `int|string|null $anchorId`.
+* `Activity::hasMonotonicKey()` is gone. It disabled anchoring for UUID and ULID
+  keys; the pair comparison is correct for those, so nothing needs to ask.
+
+### Removed: `searchWithSuggestions()`
+
+`ActivitylogService::searchWithSuggestions()` and the `search()` controller
+action have been removed. The action had no route, so nothing could reach it
+over HTTP, but it duplicated `getSearchSuggestions()` while publishing causer
+email addresses regardless of `filters.expose_causer_email`.
+
+Call `getSearchSuggestions(string $query): Collection` instead. It returns the
+same `value` / `label` / `type` rows the `/api/search/suggestions` endpoint
+serves.
+
+## Step 5: Add the UI's indexes (recommended)
+
+Spatie indexes the activity log for lookups by subject and causer. This UI asks
+different questions — it lists everything newest first, and groups by event over
+a date range — and neither was indexed. On a log of 200,000 rows MySQL answered
+a single page by reading every row and sorting the lot.
+
+```bash
+php artisan vendor:publish --tag="activitylog-ui-migrations"
+php artisan migrate
+```
+
+Measured on 204,963 activities: the first page goes from 350ms to 21ms, and the
+analytics queries read an index instead of the table.
+
+This is a separate, opt-in step for two reasons. `activity_log` belongs to
+Spatie, not to this package. And building an index on an established log locks
+it while it runs — about a second at that size, longer on a bigger one — which
+is a decision for whoever runs the database, not for a `composer update`.
+
+The migration reads the table, connection and key name from your configured
+activity model, and skips any index that already exists, so it is safe to re-run.
