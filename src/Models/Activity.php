@@ -40,16 +40,24 @@ class Activity extends SpatieActivity
     protected static bool $resolvingActivitySource = false;
 
     /**
+     * Validated instances of the configured activity model, keyed by class name.
+     *
+     * @var array<class-string, Model>
+     */
+    protected static array $resolvedActivityModels = [];
+
+    /**
      * Spatie v5 dropped activitylog.table_name and database_connection, so a
      * custom model registered as activitylog.activity_model is the only way left
      * to move the log elsewhere. Read where it points and follow it — otherwise
      * the UI reads activity_log while the application writes somewhere else
      * entirely (issue #9).
      *
-     * Resolved here rather than in the constructor: these are called a handful of
-     * times per query instead of once per hydrated row, and resolving afresh
-     * means a model that derives its table from request or tenant context is
-     * followed rather than frozen at whatever it returned first.
+     * Resolved here rather than in the constructor, so a model that derives its
+     * table from request or tenant context is followed rather than frozen at
+     * whatever it returned first. That means asking it afresh every time, and
+     * Eloquent asks often — getKeyName() alone runs on every relation load,
+     * every route-model bind and every serialised row.
      */
     public function getTable()
     {
@@ -99,6 +107,19 @@ class Activity extends SpatieActivity
             return null;
         }
 
+        // The instance is kept, its answers are not. Checking the class and
+        // constructing it is the expensive half and cannot change while the
+        // config still names the same class; asking that instance for its table
+        // is cheap and is where tenant-derived values come from, so it still
+        // happens on every call. Keying on the class name means reconfiguring
+        // between requests resolves afresh rather than serving the previous
+        // model's table.
+        $instance = static::$resolvedActivityModels[$class] ?? null;
+
+        if ($instance !== null) {
+            return static::describeActivitySource($instance);
+        }
+
         static::$resolvingActivitySource = true;
 
         try {
@@ -121,14 +142,9 @@ class Activity extends SpatieActivity
             }
 
             $instance = new $class;
+            static::$resolvedActivityModels[$class] = $instance;
 
-            return [
-                'table' => $instance->getTable(),
-                'connection' => $instance->getConnectionName(),
-                'key_name' => $instance->getKeyName(),
-                'key_type' => $instance->getKeyType(),
-                'incrementing' => $instance->getIncrementing(),
-            ];
+            return static::describeActivitySource($instance);
         } catch (\Throwable $e) {
             // Fail closed. Falling back to the default table here would quietly
             // show whichever log the default connection holds — in a multi-tenant
@@ -143,6 +159,42 @@ class Activity extends SpatieActivity
         } finally {
             static::$resolvingActivitySource = false;
         }
+    }
+
+    /**
+     * Ask the configured model where it reads from.
+     *
+     * Under the same guard the construction runs under, because a configured
+     * model that extends this one inherits these very overrides and would
+     * otherwise ask itself the question it is being asked.
+     *
+     * @return array{table: string, connection: string|null, key_name: string, key_type: string, incrementing: bool}
+     */
+    protected static function describeActivitySource(Model $instance): array
+    {
+        static::$resolvingActivitySource = true;
+
+        try {
+            return [
+                'table' => $instance->getTable(),
+                'connection' => $instance->getConnectionName(),
+                'key_name' => $instance->getKeyName(),
+                'key_type' => $instance->getKeyType(),
+                'incrementing' => $instance->getIncrementing(),
+            ];
+        } finally {
+            static::$resolvingActivitySource = false;
+        }
+    }
+
+    /**
+     * Discard the resolved model, so a test that reconfigures activity_model to a
+     * class it has just defined is not answered from a previous one.
+     */
+    public static function forgetConfiguredActivitySource(): void
+    {
+        static::$resolvedActivityModels = [];
+        static::$hasAttributeChangesColumn = [];
     }
 
 
