@@ -264,10 +264,16 @@ class ActivitylogService
             $cached = $this->readFilterOptions($name, $key);
 
             return collect($cached ?? $this->writeFilterOptions($key, $compute()));
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
             // Not a timeout — the lock backend itself failed. Reported, because
             // silently degrading to a full scan on every request is exactly the
             // situation this whole mechanism exists to avoid.
+            //
+            // Exception, not Throwable: every store signals failure with one, so
+            // an Error here is a defect in this package rather than an unhealthy
+            // backend. Catching those too turned a call to a method that did not
+            // exist into a warning nobody read, with the single-flight silently
+            // disabled and every request running the scan it was added to avoid.
             $this->reportCacheFailure($key, 'lock', $e);
 
             return collect($this->writeFilterOptions($key, $compute()));
@@ -355,15 +361,31 @@ class ActivitylogService
 
             // Long enough for the scan this guards, short enough that a worker
             // killed mid-compute does not park every other request behind a lock
-            // nobody will ever release.
-            return Cache::lock($key . ':recompute', 30);
-        } catch (\Throwable $e) {
+            // nobody will ever release. Both bounds are configurable, and were
+            // documented as such before anything read them.
+            return Cache::lock($key . ':recompute', $this->lockTtlSeconds());
+        } catch (\Exception $e) {
             $this->reportCacheFailure($key, 'lock', $e);
 
             return null;
         }
     }
 
+    /**
+     * How long a request waits for whoever is already recomputing.
+     */
+    protected function lockWaitSeconds(): int
+    {
+        return max(0, (int) config('activitylog-ui.performance.filter_lock_wait', 3));
+    }
+
+    /**
+     * How long that recompute may hold the lock before it is presumed dead.
+     */
+    protected function lockTtlSeconds(): int
+    {
+        return max(1, (int) config('activitylog-ui.performance.filter_lock_ttl', 30));
+    }
 
     /**
      * Report a cache failure without failing the request.
