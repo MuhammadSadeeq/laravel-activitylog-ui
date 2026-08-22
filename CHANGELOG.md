@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `route.middleware` no longer replaces the authentication and access middleware; it replaces the base stack only, and the security middleware is appended afterwards.
 - `AnalyticsService::getUserActivityProfile()` returns `first_activity` and `last_activity` as ISO 8601 strings rather than Carbon instances. The default HTTP response is unchanged; direct PHP callers and applications using `Carbon::serializeUsing()` will see the difference.
 
+### Fixed
+- Fixed the filter option caches returning `__PHP_Incomplete_Class` and taking the dashboard down (#12). They now store plain arrays, every read is validated before use so a bad entry is discarded and rebuilt, and the keys are versioned so an upgrade cannot read what an older release wrote. Reported by [@djemmal-nour-el-islam](https://github.com/djemmal-nour-el-islam), who also identified `getEventTypesWithStyling()` as affected.
+- Fixed the UI ignoring a custom `activitylog.activity_model` (#9). The table, connection and key metadata now come from the configured model, including causers that live on a different connection from the log itself. Reported by [@fbmfbm](https://github.com/fbmfbm).
+- Fixed four of the usability problems in #10, reported by [@femto-code](https://github.com/femto-code): "Load More" no longer jumps back to the top of the page, the repeated "Loaded N activities" toasts are gone, the causer name is configurable through `ui.causer_name_attributes` instead of showing "Unknown", and the timeline hint can be dismissed. The mobile layout quirks are addressed by the interface rework, which stacks each row into a block below 960px rather than scrolling the page sideways.
+
+### Added
+- `php artisan activitylog-ui:clear-cache` for clearing the filter option caches by hand.
+
 ## [2.0.1] - 2026-04-03
 
 ### Fixed
