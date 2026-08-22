@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2026-08-22
 
 ### Breaking Changes
 - `authorization.enabled` now defaults to `true`. Previously the UI shipped fully public — a default install served the entire audit log to unauthenticated visitors. Installs that published the config keep their own value and are unaffected; installs that never published it will now require a logged-in user. Set `ACTIVITYLOG_UI_AUTHORIZATION=false` to restore the old behaviour, and see the authorization section of the README for the full precedence order.

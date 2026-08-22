@@ -16,7 +16,7 @@
 
 ## ⬆️ Upgrading from v1.x
 
-v2.0 is a breaking release targeting Spatie laravel-activitylog v5. See **[UPGRADING.md](UPGRADING.md)** for the full migration guide.
+v3.0 is a breaking release: the UI now requires authentication by default, exports are scoped to whoever created them, and unusable parameters are refused rather than quietly reinterpreted. v2.0 before it moved to Spatie laravel-activitylog v5. See **[UPGRADING.md](UPGRADING.md)** for both paths.
 
 ---
 

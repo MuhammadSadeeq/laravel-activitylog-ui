@@ -1,8 +1,19 @@
-# Upgrading from v1.x to v2.0
+# Upgrading to v3.0
+
+## Which path applies to you
+
+**Coming from v2.x** — the database and models are unchanged. Skip to
+[Step 2](#step-2-update-this-package), then read
+[Step 4](#step-4-update-custom-code) and [Step 5](#step-5-add-the-uis-indexes-recommended).
+Nothing else in this guide applies to you.
+
+**Coming from v1.x** — start at Step 1. You are crossing Spatie
+laravel-activitylog v4 to v5 as well, which moves data between columns, and then
+the v3.0 changes on top.
 
 ## Requirements
 
-| | v1.x | v2.0 |
+| | v1.x | v3.0 |
 |---|---|---|
 | PHP | ^8.1 | ^8.4 |
 | Laravel | 10 / 11 / 12 | 12 / 13 |
@@ -108,7 +119,7 @@ optional in v5. See Spatie's own upgrade guide for the complete rename table.
 ## Step 2: Update this package
 
 ```bash
-composer require muhammadsadeeq/laravel-activitylog-ui:"^2.0"
+composer require muhammadsadeeq/laravel-activitylog-ui:"^3.0"
 ```
 
 ### Authorization now defaults to on
