@@ -24,7 +24,7 @@ class ActivitylogService
      * the next page repeated rows the user had already seen. Ten new rows while
      * reading page 1 meant page 2 opened with the last ten rows of page 1.
      */
-    public function getActivities(array $filters = [], int $perPage = 25, int|string|null $anchorId = null): LengthAwarePaginator
+    public function getActivities(array $filters = [], int $perPage = 25, ?array $anchor = null): LengthAwarePaginator
     {
         $model = new Activity;
 
@@ -43,16 +43,45 @@ class ActivitylogService
 
         $query = $this->applyFilters($query, $filters);
 
-        // Only where the key rises with insertion. On a random UUID key the
-        // predicate does not mean "everything that existed then" — a row created
-        // later collates below the anchor about half the time — so anchoring
-        // would not merely fail to help, it would silently drop rows from the
-        // range it claims to have frozen.
-        if ($anchorId !== null && Activity::hasMonotonicKey()) {
-            $query->where($model->getQualifiedKeyName(), '<=', $anchorId);
-        }
+        $this->applyAnchor($query, $model, $anchor);
 
         return $query->paginate($perPage);
+    }
+
+    /**
+     * Pin later pages to the rows that existed when the first one was read.
+     *
+     * The anchor has to be a prefix of the ordering, which means it has to be
+     * the same pair the query sorts by. An earlier version filtered on the key
+     * alone while the list was ordered by created_at, and the two disagree the
+     * moment anything is backdated or imported: on the reference dataset the
+     * newest row by time sat at key 160,488 while page one also held key
+     * 203,493, so attaching the anchor cut 44,523 activities — a fifth of the
+     * log — out of every page after the first, with the footer still reporting
+     * the full count.
+     *
+     * Comparing the pair is also correct for UUID and ULID keys, which is why
+     * this no longer asks whether the key increments.
+     *
+     * @param  array{time: string, id: int|string}|null  $anchor
+     */
+    protected function applyAnchor(Builder $query, Activity $model, ?array $anchor): void
+    {
+        if ($anchor === null) {
+            return;
+        }
+
+        $createdAt = $model->qualifyColumn('created_at');
+        $key = $model->getQualifiedKeyName();
+
+        $query->where(function (Builder $outer) use ($createdAt, $key, $anchor) {
+            $outer
+                ->where($createdAt, '<', $anchor['time'])
+                ->orWhere(function (Builder $tie) use ($createdAt, $key, $anchor) {
+                    $tie->where($createdAt, '=', $anchor['time'])
+                        ->where($key, '<=', $anchor['id']);
+                });
+        });
     }
 
     /**
@@ -334,6 +363,7 @@ class ActivitylogService
             return null;
         }
     }
+
 
     /**
      * Report a cache failure without failing the request.

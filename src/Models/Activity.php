@@ -85,22 +85,6 @@ class Activity extends SpatieActivity
     }
 
     /**
-     * Whether rows can be ordered and anchored by their key.
-     *
-     * The pagination anchor is a `key <= x` predicate over a list ordered by that
-     * key, which only means "everything that existed then" when the key rises
-     * with insertion. A random UUID does not: one generated after the anchor
-     * collates below it about half the time, joins the supposedly frozen set,
-     * and shifts the very offsets the anchor exists to hold still.
-     */
-    public static function hasMonotonicKey(): bool
-    {
-        $model = new static();
-
-        return $model->getIncrementing() && in_array($model->getKeyType(), ['int', 'integer'], true);
-    }
-
-    /**
      * @return array{table: string, connection: string|null, key_name: string, key_type: string, incrementing: bool}|null
      */
     protected static function configuredActivitySource(): ?array

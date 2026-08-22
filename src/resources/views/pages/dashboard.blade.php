@@ -155,10 +155,12 @@ function activityDashboard() {
         currentPage: 1,
         perPage: {{ config('activitylog-ui.ui.default_per_page', 25) }},
         totalPages: 1,
-        // Id of the newest row this listing is pinned to. Taken from the first
-        // page and sent with every page after it, so activities recorded while
-        // the user reads do not shift the offsets underneath them.
+        // The newest row this listing is pinned to, as the (time, id) pair the
+        // server orders by. Both halves travel together: filtering on the id
+        // alone is not a prefix of that ordering, and hid a fifth of the log
+        // whenever a backdated activity made the two disagree.
         anchorId: null,
+        anchorTime: null,
         showExportModal: false,
         @if(config('activitylog-ui.features.saved_views', true))
         showSaveViewModal: false,
@@ -243,6 +245,7 @@ function activityDashboard() {
             // every other page is a move within the listing page 1 established.
             if (page === 1) {
                 this.anchorId = null;
+                this.anchorTime = null;
             }
 
             try {
@@ -251,8 +254,9 @@ function activityDashboard() {
                 params.append('page', page);
                 params.append('per_page', this.perPage);
 
-                if (this.anchorId !== null && this.anchorId !== undefined) {
+                if (this.anchorId != null && this.anchorTime != null) {
                     params.append('anchor_id', this.anchorId);
+                    params.append('anchor_time', this.anchorTime);
                 }
 
                 // Add filters to params
@@ -286,12 +290,14 @@ function activityDashboard() {
                 this.totalActivities = result.total || 0;
                 this.totalPages = result.last_page || 1;
                 this.anchorId = result.anchor_id ?? null;
+                this.anchorTime = result.anchor_time ?? null;
 
                 // No success toast: the rows appearing is the confirmation.
             } catch (error) {
                 this.activities = [];
                 this.totalActivities = 0;
                 this.anchorId = null;
+                this.anchorTime = null;
                 this.loadError = true;
 
                 if (window.notify) {
@@ -407,8 +413,9 @@ function activityDashboard() {
                 // More re-read an offset into a list that had grown since the
                 // previous one, so the rows it appended overlapped the rows
                 // already on screen.
-                if (this.anchorId !== null && this.anchorId !== undefined) {
+                if (this.anchorId != null && this.anchorTime != null) {
                     params.append('anchor_id', this.anchorId);
+                    params.append('anchor_time', this.anchorTime);
                 }
 
                 // Add filters to params

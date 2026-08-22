@@ -353,17 +353,14 @@ class ActivityLogController extends Controller
             // Pins later pages to the rows that existed when the first one was
             // read, so activities recorded in between do not push the list down
             // and make the next page repeat what the user has already seen.
-            $anchorId = null;
+            //
+            // Both halves are required, because the listing is ordered by
+            // created_at with the key as a tiebreak and an anchor has to be a
+            // prefix of that ordering. A lone id is not, and silently hid a
+            // fifth of the log when the two disagreed.
+            $anchor = $this->anchorFromRequest($request);
 
-            if ($request->exists('anchor_id') && $request->input('anchor_id') !== null && $request->input('anchor_id') !== '') {
-                $anchorId = $this->sanitizeId($request->input('anchor_id'));
-
-                if ($anchorId === null) {
-                    $this->rejectInput('anchor_id', 'The anchor_id parameter is not a usable identifier.');
-                }
-            }
-
-            $activities = $this->activitylogService->getActivities($filters, $perPage, $anchorId);
+            $activities = $this->activitylogService->getActivities($filters, $perPage, $anchor);
 
             return response()->json([
                 'data' => $activities->items(),
@@ -379,12 +376,10 @@ class ActivityLogController extends Controller
                 // Only page 1 can mint one: the first row of any later page is
                 // partway down the list, and pinning to it would silently hide
                 // everything above.
-                //
-                // Null on a key that does not rise with insertion, so a client is
-                // not handed an anchor the server will not honour.
-                'anchor_id' => Activity::hasMonotonicKey()
-                    ? ($anchorId ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null))
-                    : null,
+                'anchor_id' => $anchor['id'] ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null),
+                'anchor_time' => $anchor['time'] ?? ($activities->currentPage() === 1
+                    ? $activities->first()?->created_at?->format('Y-m-d H:i:s')
+                    : null),
             ]);
         } catch (ValidationException | HttpExceptionInterface $e) {
             // A refused input is the answer, not a failure to produce one.
@@ -844,6 +839,43 @@ class ActivityLogController extends Controller
         }
 
         return [];
+    }
+
+    /**
+     * Read the pagination anchor, which is a (created_at, key) pair.
+     *
+     * Both halves must be present and usable, or there is no anchor: filtering
+     * on half of a compound ordering is what dropped rows before.
+     *
+     * @return array{time: string, id: int|string}|null
+     */
+    protected function anchorFromRequest(Request $request): ?array
+    {
+        $rawId = $request->input('anchor_id');
+        $rawTime = $request->input('anchor_time');
+
+        $missingId = $rawId === null || $rawId === '';
+        $missingTime = $rawTime === null || $rawTime === '';
+
+        if ($missingId && $missingTime) {
+            return null;
+        }
+
+        if ($missingId || $missingTime) {
+            $this->rejectInput('anchor_id', 'The anchor_id and anchor_time parameters must be supplied together.');
+        }
+
+        $id = $this->sanitizeId($rawId);
+
+        if ($id === null) {
+            $this->rejectInput('anchor_id', 'The anchor_id parameter is not a usable identifier.');
+        }
+
+        if (!is_string($rawTime) || preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/', $rawTime) !== 1) {
+            $this->rejectInput('anchor_time', 'The anchor_time parameter must be a timestamp of the form Y-m-d H:i:s.');
+        }
+
+        return ['time' => str_replace('T', ' ', $rawTime), 'id' => $id];
     }
 
     /**
