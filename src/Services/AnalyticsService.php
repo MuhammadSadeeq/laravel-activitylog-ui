@@ -2,9 +2,12 @@
 
 namespace MuhammadSadeeq\ActivitylogUi\Services;
 
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 
 class AnalyticsService
@@ -16,10 +19,16 @@ class AnalyticsService
     {
         // Create cache key based on filters
         $filterHash = md5(serialize($filters));
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.dashboard_summary.' . $filterHash;
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.' . Activity::sourceFingerprint() . '.dashboard_summary.' . $filterHash;
         $cacheDuration = config('activitylog-ui.analytics.cache_duration', 3600);
 
-        return Cache::remember($cacheKey, $cacheDuration, function () use ($filters) {
+        $cached = $this->readCachedArray($cacheKey, ['stats', 'event_types', 'total_activities']);
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $summary = (function () use ($filters) {
             $eventTypeBreakdown = $this->getEventTypeBreakdown($filters);
             $totalActivities = $this->getTotalActivities($filters);
 
@@ -48,43 +57,135 @@ class AnalyticsService
                 'activities_today' => $this->getActivitiesToday($filters),
                 'activities_this_week' => $this->getActivitiesThisWeek($filters),
                 'activities_this_month' => $this->getActivitiesThisMonth($filters),
-                'popular_models' => $this->getPopularModels(10, $filters),
+                // toArray(): this was a Collection object inside an otherwise plain
+                // cached array, so the payload still depended on a class being
+                // loadable at unserialize time.
+                'popular_models' => $this->getPopularModels(10, $filters)->toArray(),
                 'activity_trends' => $this->getActivityTrends(30, $filters),
             ];
-        });
+        })();
+
+        $this->writeCachedArray($cacheKey, $summary, $cacheDuration);
+
+        return $summary;
+    }
+
+    /**
+     * Version segment for the analytics cache keys.
+     *
+     * These payloads used to contain Collections, Eloquent models and Carbon
+     * instances. Without a version bump an entry written before that changed
+     * would still be read back and served, since it is an array either way.
+     *
+     * v3: analytics now filters exactly as the activity list does. The filter
+     * array — and so its hash — is unchanged, but the numbers it produces are
+     * not, so a v2 entry answers the same key with the old, narrower result.
+     */
+    protected const ANALYTICS_CACHE_VERSION = 'v3';
+
+    /**
+     * Read a cached analytics array, or null when there is nothing usable.
+     *
+     * @param  list<string>  $requiredKeys
+     * @return array<string, mixed>|null
+     */
+    protected function readCachedArray(string $key, array $requiredKeys = []): ?array
+    {
+        try {
+            $cached = Cache::get($key);
+
+            if (is_array($cached) && $this->isPlainData($cached)) {
+                foreach ($requiredKeys as $required) {
+                    if (!array_key_exists($required, $cached)) {
+                        Cache::forget($key);
+
+                        return null;
+                    }
+                }
+
+                return $cached;
+            }
+
+            if ($cached !== null) {
+                Cache::forget($key);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Activity log UI analytics cache read failed; falling back to a live query.', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Write a cached analytics array, tolerating an unavailable store.
+     */
+    protected function writeCachedArray(string $key, array $value, int $ttl): void
+    {
+        try {
+            Cache::put($key, $value, $ttl);
+        } catch (\Throwable $e) {
+            Log::warning('Activity log UI analytics cache write failed.', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Whether a value is made only of scalars, nulls and arrays of the same.
+     */
+    protected function isPlainData(mixed $value): bool
+    {
+        if ($value === null || is_scalar($value)) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (!$this->isPlainData($item)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
      * Apply filters to a query builder.
+     *
+     * Delegates to the list's own filtering rather than keeping a reduced copy.
+     * The copy ignored causer_type, subject_id and property_key, and searched
+     * only `description`, so picking one causer counted another's activities and
+     * searching an email found rows in the table but nothing in analytics.
      */
     protected function applyFilters($query, array $filters = [])
     {
-        if (!empty($filters['search'])) {
-            $query->where('description', 'like', '%' . $filters['search'] . '%');
-        }
+        return app(ActivitylogService::class)->applyFilters($query, $filters);
+    }
 
-        if (!empty($filters['start_date'])) {
-            $query->whereDate('created_at', '>=', $filters['start_date']);
-        }
-
-        if (!empty($filters['end_date'])) {
-            $query->whereDate('created_at', '<=', $filters['end_date']);
-        }
-
-        if (!empty($filters['event_types']) && is_array($filters['event_types'])) {
-            $query->whereIn('event', $filters['event_types']);
-        }
-
-        if (!empty($filters['causer_id'])) {
-            $causerId = is_string($filters['causer_id']) ? (int) $filters['causer_id'] : $filters['causer_id'];
-            $query->where('causer_id', $causerId);
-        }
-
-        if (!empty($filters['subject_type'])) {
-            $query->where('subject_type', $filters['subject_type']);
-        }
-
-        return $query;
+    /**
+     * Merge an explicit date window over the caller's filters.
+     *
+     * date_preset takes precedence over start_date/end_date in the shared filter
+     * logic, so a preset left in place would override the very window these
+     * counts are asking for.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    protected function withDateWindow(array $filters, string $start, string $end): array
+    {
+        return array_merge($filters, [
+            'date_preset' => null,
+            'start_date' => $start,
+            'end_date' => $end,
+        ]);
     }
 
     /**
@@ -103,10 +204,7 @@ class AnalyticsService
     protected function getActivitiesToday(array $filters = []): int
     {
         $query = Activity::query();
-        $this->applyFilters($query, array_merge($filters, [
-            'start_date' => now()->startOfDay()->toDateString(),
-            'end_date' => now()->endOfDay()->toDateString(),
-        ]));
+        $this->applyFilters($query, $this->withDateWindow($filters, now()->startOfDay()->toDateString(), now()->endOfDay()->toDateString()));
         return $query->count();
     }
 
@@ -116,10 +214,7 @@ class AnalyticsService
     protected function getActivitiesThisWeek(array $filters = []): int
     {
         $query = Activity::query();
-        $this->applyFilters($query, array_merge($filters, [
-            'start_date' => now()->startOfWeek()->toDateString(),
-            'end_date' => now()->endOfWeek()->toDateString(),
-        ]));
+        $this->applyFilters($query, $this->withDateWindow($filters, now()->startOfWeek()->toDateString(), now()->endOfWeek()->toDateString()));
         return $query->count();
     }
 
@@ -129,10 +224,7 @@ class AnalyticsService
     protected function getActivitiesThisMonth(array $filters = []): int
     {
         $query = Activity::query();
-        $this->applyFilters($query, array_merge($filters, [
-            'start_date' => now()->startOfMonth()->toDateString(),
-            'end_date' => now()->endOfMonth()->toDateString(),
-        ]));
+        $this->applyFilters($query, $this->withDateWindow($filters, now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString()));
         return $query->count();
     }
 
@@ -168,12 +260,34 @@ class AnalyticsService
             $startDate = $endDate->copy()->subDays($maxDays);
         }
 
-        // Generate timeline data for each day in the range
+        // One grouped query for the whole range. This used to be a COUNT per day
+        // with the full filter set re-applied each time, so a 90-day window cost
+        // 91 round trips — and with a search term each of those carried a
+        // whereHasMorph across every causer table.
+        $expression = $this->dateExpression();
+
+        $query = Activity::query()
+            ->selectRaw("{$expression} as day, count(*) as aggregate")
+            // Half-open, not whereBetween(startOfDay, endOfDay). Bindings are
+            // formatted to whole seconds, so endOfDay's .999999 became :59 and a
+            // row stored at 23:59:59.5 fell outside a range that should contain
+            // it — a row the per-day count it replaced did include.
+            ->where('created_at', '>=', $startDate->copy()->startOfDay())
+            ->where('created_at', '<', $endDate->copy()->startOfDay()->addDay());
+
+        $this->applyFilters($query, $filters);
+
+        $counts = $query->groupBy(DB::raw($expression))
+            ->get()
+            // get() rather than pluck(): a driver may hand back a DateTime for a
+            // date column — SQL Server does with SQLSRV_ATTR_FETCHES_DATETIME_TYPE
+            // — and pluck would use the object as an array key before this could
+            // normalise it.
+            ->mapWithKeys(fn ($row) => [$this->dayKey($row->day) => (int) $row->aggregate]);
+
         $currentDate = $startDate->copy();
         while ($currentDate <= $endDate) {
-            $query = Activity::whereDate('created_at', $currentDate->toDateString());
-            $this->applyFilters($query, $filters);
-            $count = $query->count();
+            $count = $counts[$currentDate->toDateString()] ?? 0;
 
             if ($count > $maxCount) {
                 $maxCount = $count;
@@ -197,6 +311,37 @@ class AnalyticsService
         }
 
         return $days;
+    }
+
+    /**
+     * A driver-appropriate SQL expression for the date part of created_at.
+     *
+     * DATE() is MySQL, MariaDB and SQLite; PostgreSQL and SQL Server have no
+     * such function, so every grouped-by-day chart here was a syntax error on
+     * those two.
+     */
+    protected function dateExpression(string $column = 'created_at'): string
+    {
+        return match (Activity::query()->getConnection()->getDriverName()) {
+            'pgsql', 'sqlsrv' => "CAST({$column} AS DATE)",
+            default => "DATE({$column})",
+        };
+    }
+
+    /**
+     * Normalise whatever a driver returns for a grouped date into 'Y-m-d'.
+     *
+     * Most hand back a string, but a date column can arrive as a DateTime — SQL
+     * Server does so with SQLSRV_ATTR_FETCHES_DATETIME_TYPE — and casting one to
+     * a string throws rather than producing a date.
+     */
+    protected function dayKey(mixed $value): string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        return substr((string) $value, 0, 10);
     }
 
     /**
@@ -287,8 +432,10 @@ class AnalyticsService
         $endDate = isset($filters['end_date']) ? now()->parse($filters['end_date']) : now()->endOfDay();
         $startDate = isset($filters['start_date']) ? now()->parse($filters['start_date']) : $endDate->copy()->subDays($days)->startOfDay();
 
+        $expression = $this->dateExpression();
+
         $activities = Activity::select(
-                DB::raw('DATE(created_at) as date'),
+                DB::raw("{$expression} as date"),
                 DB::raw('count(*) as count'),
                 'event'
             );
@@ -296,7 +443,7 @@ class AnalyticsService
         // Apply date range and other filters
         $this->applyFilters($activities, $filters);
 
-        $activities = $activities->groupBy('date', 'event')
+        $activities = $activities->groupBy(DB::raw($expression), 'event')
             ->orderBy('date')
             ->get();
 
@@ -308,25 +455,85 @@ class AnalyticsService
             $current->addDay();
         }
 
-        // Organize data by event type
-        $eventTypes = $activities->pluck('event')->unique()->filter();
+        // Indexed once, then read by key.
+        //
+        // This used to call $activities->where(...)->where(...)->first() for
+        // every event type on every day, and each of those scans the whole
+        // collection twice and allocates two more. At 90 days and 14 event
+        // types over 200k activities that is roughly 3.2 million closure calls:
+        // measured at 123 seconds, which is a 500 rather than a chart. The
+        // query underneath it takes 271ms.
+        $counts = [];
+
+        foreach ($activities as $row) {
+            $counts[$this->dayKey($row->date)][$row->event] = (int) $row->count;
+        }
+
+        // Only the busiest handful get their own line. An application can log
+        // any number of event names — this dataset has thirteen — and past about
+        // six the palette starts repeating, so two lines share a colour and the
+        // legend stops identifying anything. The rest are summed into one
+        // series, which keeps the totals honest.
+        $totals = [];
+
+        foreach ($activities as $row) {
+            if ($row->event === null || $row->event === '') {
+                continue;
+            }
+
+            $totals[$row->event] = ($totals[$row->event] ?? 0) + (int) $row->count;
+        }
+
+        arsort($totals);
+        $limit = (int) config('activitylog-ui.analytics.max_chart_series', 6);
+        $eventTypes = collect(array_slice(array_keys($totals), 0, $limit));
+        $remainder = array_slice(array_keys($totals), $limit);
         $chartData = [];
 
         foreach ($eventTypes as $eventType) {
             $eventData = [];
             foreach ($dates as $date) {
-                $activity = $activities->where('date', $date)->where('event', $eventType)->first();
                 $eventData[] = [
                     'date' => $date,
-                    'count' => $activity ? $activity->count : 0,
+                    'count' => $counts[$date][$eventType] ?? 0,
                 ];
             }
 
             $colors = config('activitylog-ui.analytics.chart_colors', []);
             $chartData[] = [
-                'label' => ucfirst($eventType),
+                // The raw event name as well as the readable one: the chart
+                // colours each line by which event it is, and cannot do that
+                // from a label that has already been prettied up.
+                'event' => (string) $eventType,
+                // Snake_case is how applications log; it is not how a chart
+                // legend should read.
+                'label' => ucfirst(str_replace('_', ' ', (string) $eventType)),
                 'data' => $eventData,
                 'color' => $colors[$eventType] ?? '#6b7280',
+            ];
+        }
+
+        // Everything past the limit is summed rather than dropped. A chart that
+        // silently omits seven of thirteen event types is worse than one whose
+        // colours repeat.
+        if ($remainder !== []) {
+            $otherData = [];
+
+            foreach ($dates as $date) {
+                $sum = 0;
+
+                foreach ($remainder as $eventType) {
+                    $sum += $counts[$date][$eventType] ?? 0;
+                }
+
+                $otherData[] = ['date' => $date, 'count' => $sum];
+            }
+
+            $chartData[] = [
+                'event' => null,
+                'label' => sprintf('Other (%d more)', count($remainder)),
+                'data' => $otherData,
+                'color' => '#6b7280',
             ];
         }
 
@@ -339,82 +546,140 @@ class AnalyticsService
     /**
      * Get user activity profile.
      */
-    public function getUserActivityProfile(int $userId, string $userType): array
+    public function getUserActivityProfile(int|string $userId, string $userType): array
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".user_profile.{$userType}.{$userId}";
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.' . Activity::sourceFingerprint() . ".user_profile.{$userType}.{$userId}";
 
-        return Cache::remember($cacheKey, 1800, function () use ($userId, $userType) {
-            $activities = Activity::where('causer_type', $userType)
-                ->where('causer_id', $userId)
-                ->with('subject')
-                ->get();
+        $cached = Cache::get($cacheKey);
 
-            return [
-                'total_activities' => $activities->count(),
-                'first_activity' => $activities->min('created_at'),
-                'last_activity' => $activities->max('created_at'),
-                'event_breakdown' => $this->getUserEventBreakdown($activities),
-                'subject_breakdown' => $this->getUserSubjectBreakdown($activities),
-                'daily_activity' => $this->getUserDailyActivity($activities),
-                'recent_activities' => $activities->sortByDesc('created_at')->take(10)->values(),
-            ];
-        });
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        if ($cached !== null) {
+            Cache::forget($cacheKey);
+        }
+
+        // Counted in the database rather than in PHP. Loading every activity a
+        // causer ever recorded — with its subject morphed in — to produce six
+        // summary numbers took eight seconds for a causer with 3,342 of them,
+        // and there is no upper bound on how many a busy one has.
+        $scope = fn () => Activity::where('causer_type', $userType)->where('causer_id', $userId);
+
+        $total = $scope()->count();
+        $span = $scope()->selectRaw('MIN(created_at) as first_at, MAX(created_at) as last_at')->first();
+
+        // Ten rows, so the eager loads the list actually needs are affordable here
+        // and nowhere else in this method.
+        $recent = $scope()
+            ->with(['causer', 'subject'])
+            ->orderByDesc('created_at')
+            ->orderByDesc((new Activity)->getKeyName())
+            ->limit(10)
+            ->get();
+
+        // Everything stored here is reduced to plain arrays and scalars. This used
+        // to cache Eloquent models and Collections; if that payload could not be
+        // unserialized the method still satisfied its `array` return type, so it
+        // failed silently with junk data rather than loudly.
+        $profile = [
+            'total_activities' => $total,
+            'first_activity' => $span?->first_at ? Carbon::parse($span->first_at)->toISOString() : null,
+            'last_activity' => $span?->last_at ? Carbon::parse($span->last_at)->toISOString() : null,
+            'event_breakdown' => $this->getUserEventBreakdown($scope(), $total)->all(),
+            'subject_breakdown' => $this->getUserSubjectBreakdown($scope(), $total)->all(),
+            'daily_activity' => $this->getUserDailyActivity($scope()),
+            'recent_activities' => $recent->toArray(),
+        ];
+
+        Cache::put($cacheKey, $profile, 1800);
+
+        return $profile;
     }
 
     /**
      * Get user's event type breakdown.
      */
-    protected function getUserEventBreakdown(Collection $activities): Collection
+    protected function getUserEventBreakdown(Builder $activities, int $total): Collection
     {
-        return $activities->groupBy('event')
-            ->map(function ($group, $event) use ($activities) {
-                return [
-                    'event' => $event,
-                    'label' => ucfirst($event),
-                    'count' => $group->count(),
-                    'percentage' => round(($group->count() / $activities->count()) * 100, 1),
-                ];
-            })
+        return $activities->selectRaw('event, COUNT(*) as tally')
+            ->groupBy('event')
+            ->pluck('tally', 'event')
+            ->map(fn (int $count, $event) => [
+                'event' => $event,
+                'label' => ucfirst((string) $event),
+                'count' => $count,
+                'percentage' => $this->shareOf($count, $total),
+            ])
             ->values();
     }
 
     /**
      * Get user's subject type breakdown.
      */
-    protected function getUserSubjectBreakdown(Collection $activities): Collection
+    protected function getUserSubjectBreakdown(Builder $activities, int $total): Collection
     {
-        return $activities->groupBy('subject_type')
-            ->map(function ($group, $subjectType) use ($activities) {
-                return [
-                    'type' => $subjectType,
-                    'name' => class_basename($subjectType ?: 'Unknown'),
-                    'count' => $group->count(),
-                    'percentage' => round(($group->count() / $activities->count()) * 100, 1),
-                ];
-            })
+        return $activities->selectRaw('subject_type, COUNT(*) as tally')
+            ->groupBy('subject_type')
+            ->pluck('tally', 'subject_type')
+            ->map(fn (int $count, $subjectType) => [
+                'type' => $subjectType,
+                'name' => class_basename($subjectType ?: 'Unknown'),
+                'count' => $count,
+                'percentage' => $this->shareOf($count, $total),
+            ])
             ->sortByDesc('count')
             ->values();
     }
 
     /**
+     * A count as a percentage of the whole, without dividing by a zero total.
+     */
+    protected function shareOf(int $count, int $total): float
+    {
+        return $total > 0 ? round(($count / $total) * 100, 1) : 0.0;
+    }
+
+    /**
      * Get user's daily activity for the last 30 days.
      */
-    protected function getUserDailyActivity(Collection $activities): array
+    protected function getUserDailyActivity(Builder $activities): array
     {
-        $last30Days = collect();
-        for ($i = 29; $i >= 0; $i--) {
-            $date = now()->subDays($i)->toDateString();
-            $count = $activities->filter(function ($activity) use ($date) {
-                return $activity->created_at->toDateString() === $date;
-            })->count();
+        $from = now()->subDays(29)->startOfDay();
+        $expression = $this->dateExpression();
 
-            $last30Days->push([
-                'date' => $date,
-                'count' => $count,
-            ]);
+        // One grouped query over the window, not one pass over the causer's
+        // entire history per day. The previous form walked every activity thirty
+        // times to count the handful that fell in the last month.
+        //
+        // Through dateExpression() and dayKey() like every other grouped-by-day
+        // query here: DATE() does not exist on SQL Server, and a driver may hand
+        // back a DateTime for a date column, which pluck() would use as an array
+        // key before anything could normalise it.
+        $counts = [];
+
+        foreach (
+            $activities
+                ->where('created_at', '>=', $from)
+                ->selectRaw("{$expression} as day, COUNT(*) as tally")
+                ->groupBy(DB::raw($expression))
+                ->get() as $row
+        ) {
+            $counts[$this->dayKey($row->day)] = (int) $row->tally;
         }
 
-        return $last30Days->toArray();
+        // Still every day in the window, including the empty ones: the chart
+        // draws a continuous month and a gap is not the same as a zero.
+        return collect(range(29, 0))
+            ->map(function (int $daysAgo) use ($counts) {
+                $date = now()->subDays($daysAgo)->toDateString();
+
+                return [
+                    'date' => $date,
+                    'count' => (int) ($counts[$date] ?? 0),
+                ];
+            })
+            ->all();
     }
 
     /**
@@ -422,20 +687,22 @@ class AnalyticsService
      */
     public function getActivityHeatmap(int $days = 365): array
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . ".heatmap.{$days}";
+        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.' . self::ANALYTICS_CACHE_VERSION . '.' . Activity::sourceFingerprint() . ".heatmap.{$days}";
 
         return Cache::remember($cacheKey, 3600, function () use ($days) {
             $startDate = now()->subDays($days)->startOfDay();
 
+            $expression = $this->dateExpression();
+
             $activities = Activity::select(
-                    DB::raw('DATE(created_at) as date'),
+                    DB::raw("{$expression} as date"),
                     DB::raw('count(*) as count')
                 )
                 ->where('created_at', '>=', $startDate)
-                ->groupBy('date')
+                ->groupBy(DB::raw($expression))
                 ->orderBy('date')
                 ->get()
-                ->keyBy('date');
+                ->keyBy(fn ($row) => $this->dayKey($row->date));
 
             $heatmapData = [];
             $current = $startDate->copy();
@@ -482,17 +749,36 @@ class AnalyticsService
      */
     public function getAnomalies(int $days = 30): array
     {
+        // The one grouped-by-day query the driver-aware expression had not
+        // reached, so this was still a syntax error on PostgreSQL and SQL Server.
+        $expression = $this->dateExpression();
+
         $dailyActivity = Activity::select(
-                DB::raw('DATE(created_at) as date'),
+                DB::raw("{$expression} as date"),
                 DB::raw('count(*) as count')
             )
             ->where('created_at', '>=', now()->subDays($days))
-            ->groupBy('date')
+            ->groupBy(DB::raw($expression))
             ->orderBy('date')
-            ->pluck('count', 'date');
+            ->get()
+            ->mapWithKeys(fn ($row) => [$this->dayKey($row->date) => (int) $row->count]);
 
-        $mean = $dailyActivity->avg();
+        // No activity in the window means no anomalies, not a crash: avg() is
+        // null on an empty collection and the float-typed parameter below then
+        // raised a TypeError, so asking for anomalies over a quiet period 500'd.
+        if ($dailyActivity->isEmpty()) {
+            return [];
+        }
+
+        $mean = (float) $dailyActivity->avg();
         $stdDev = $this->calculateStandardDeviation($dailyActivity->values()->toArray(), $mean);
+
+        // Every day identical — including a single day, where the deviation of
+        // one value is zero. Nothing stands out, and dividing by it would not.
+        if ($stdDev <= 0.0) {
+            return [];
+        }
+
         $threshold = $mean + (2 * $stdDev); // 2 standard deviations
 
         $anomalies = [];

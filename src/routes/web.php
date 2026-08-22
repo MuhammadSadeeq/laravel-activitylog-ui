@@ -2,25 +2,47 @@
 
 use Illuminate\Support\Facades\Route;
 use MuhammadSadeeq\ActivitylogUi\Http\Controllers\ActivityLogController;
+use MuhammadSadeeq\ActivitylogUi\Http\Controllers\AssetController;
 use MuhammadSadeeq\ActivitylogUi\Http\Controllers\ExportController;
 
 $config = config('activitylog-ui.route', []);
 $prefix = $config['prefix'] ?? 'activitylog-ui';
 $name = $config['name'] ?? 'activitylog-ui.';
 
-// Build middleware based on authorization configuration
-$middleware = ['web'];
-if (config('activitylog-ui.authorization.enabled', false)) {
-    $middleware[] = 'auth';
-    $middleware[] = \MuhammadSadeeq\ActivitylogUi\Http\Middleware\ActivityLogAccessMiddleware::class;
-}
+// A custom stack replaces the base middleware, so someone can swap 'web' for
+// their own group or add a tenancy layer.
+$middleware = $config['middleware'] ?? ['web'];
 
-// Allow custom middleware override if provided
-if (isset($config['middleware'])) {
-    $middleware = $config['middleware'];
+// Authorization is appended afterwards and is NOT overridable. Letting a custom
+// stack replace it meant an app that set route.middleware lost authentication
+// and the access lists entirely, and served the whole audit log publicly.
+// The fallback is true so a missing or partial config fails closed; the
+// controllers already assumed true here while this file assumed false.
+//
+// The second branch covers allow-lists configured while authorization is off:
+// the middleware enforces those lists either way, but it was only ever
+// registered when authorization was enabled, so anyone who set them without
+// enabling authorization got no protection at all. Authentication comes with
+// it — an allow-list needs a logged-in user, and without it a guest got a bare
+// 401 with no route to signing in.
+if (
+    config('activitylog-ui.authorization.enabled', true)
+    || config('activitylog-ui.access.allowed_users')
+    || config('activitylog-ui.access.allowed_roles')
+) {
+    $middleware = \MuhammadSadeeq\ActivitylogUi\Support\RouteMiddleware::protect($middleware);
 }
 
 $domain = $config['domain'] ?? null;
+
+// Outside the protected group on purpose. A guest is redirected to the host's
+// login page, and a stylesheet that 401s would leave that page unstyled — and
+// it is a stylesheet, so there is nothing to protect.
+// The version is part of the path, so an upgraded package is a new URL and the
+// year-long immutable cache cannot serve the previous release's stylesheet.
+Route::get($prefix . '/assets/{version}/activitylog-ui.css', [AssetController::class, 'stylesheet'])
+    ->name($name . 'assets.css')
+    ->domain($domain);
 
 Route::group([
     'prefix' => $prefix,

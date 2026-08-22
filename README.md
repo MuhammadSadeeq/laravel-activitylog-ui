@@ -16,7 +16,7 @@
 
 ## ⬆️ Upgrading from v1.x
 
-v2.0 is a breaking release targeting Spatie laravel-activitylog v5. See **[UPGRADING.md](UPGRADING.md)** for the full migration guide.
+v3.0 is a breaking release: the UI now requires authentication by default, exports are scoped to whoever created them, and unusable parameters are refused rather than quietly reinterpreted. v2.0 before it moved to Spatie laravel-activitylog v5. See **[UPGRADING.md](UPGRADING.md)** for both paths.
 
 ---
 
@@ -37,6 +37,8 @@ v2.0 is a breaking release targeting Spatie laravel-activitylog v5. See **[UPGRA
 * Laravel 12 | 13
 * [spatie/laravel-activitylog](https://github.com/spatie/laravel-activitylog) ≥ 5.0 (already logging your activities)
 * Database table `activity_log` with Spatie v5’s schema (includes `attribute_changes` column)
+
+> **On Laravel 12** Composer resolves `spatie/laravel-activitylog` to **5.0.0**, because 5.1.0 requires `illuminate/* ^13.0`. The schema and everything in this package behave the same on both; you are simply pinned to 5.0.x until you move to Laravel 13. Verified against Laravel 12.66 / Spatie 5.0.0 and Laravel 13.25 / Spatie 5.1.0.
 
 ### Optional (for export)
 
@@ -75,7 +77,20 @@ composer require maatwebsite/excel barryvdh/laravel-dompdf
    php artisan vendor:publish --provider="Spatie\Activitylog\ActivitylogServiceProvider" --tag="activitylog-migrations"
    php artisan migrate
    ```
-4. **Visit the UI**   
+4. **(Recommended on a large log) Add the UI’s indexes**   
+   Spatie indexes the log for lookups by subject and causer. This UI lists
+   everything newest first, which nothing indexes — on a log of 200,000 rows
+   MySQL answers a single page by reading every row and sorting the lot.
+   ```bash
+   php artisan vendor:publish --provider="MuhammadSadeeq\ActivitylogUi\ActivitylogUiServiceProvider" --tag="activitylog-ui-migrations"
+   php artisan migrate
+   ```
+   Measured on 204,963 activities, this took the first page from 350&nbsp;ms to
+   21&nbsp;ms and let the analytics queries read an index instead of the table.
+   It is a separate step because `activity_log` is Spatie’s table and because
+   building an index on an established log locks it while it runs — about a
+   second at that size, longer on a bigger one.
+5. **Visit the UI**   
    ```
    /activitylog-ui   # default route prefix
    ```
@@ -94,7 +109,7 @@ return [
     ],
 
     'authorization' => [
-        'enabled' => false,           // true => uses Gate / auth middleware
+        'enabled' => true,            // false => the UI is fully public
         'gate'    => 'viewActivityLogUi',
     ],
 
@@ -124,11 +139,47 @@ Refer to the inline comments in the file for every available option.
 
 ---
 
+## 🗄️ Custom Table or Connection
+
+Spatie v5 removed the `activitylog.table_name` and `activitylog.database_connection`
+settings. The supported way to move the log is a custom Activity model:
+
+```php
+use Spatie\Activitylog\Models\Activity as BaseActivity;
+
+class Activity extends BaseActivity
+{
+    protected $table = 'my_activity_log';
+    protected $connection = 'my_connection';
+}
+```
+
+```php
+// config/activitylog.php
+'activity_model' => \App\Models\Activity::class,
+```
+
+This UI reads that model's table and connection, so it follows the log wherever
+you put it — no additional configuration here. Note it reads the *location*, not
+the model itself: scopes, casts and accessors you add to your model are not used
+by the UI's queries.
+
+---
+
 ## 🔐 Authorization & Access Control
 
-* **Gate:** `viewActivityLogUi` is auto-registered (see `ActivitylogUiServiceProvider`).  You may define it in your own code or rely on the package’s default email/role checks.
-* **Toggle authentication:** Set `authorization.enabled` to `true` to require login + gate.
-* **Granular lists:** `access.allowed_users` and `access.allowed_roles` let you open the UI to a subset of users—regardless of the gate.
+Access is decided in this order:
+
+1. **`authorization.enabled`** (default `true`, or `ACTIVITYLOG_UI_AUTHORIZATION`) — requires a logged-in user, then the gate below. Turning it off removes the login requirement.
+2. **`access.allowed_users` / `access.allowed_roles`** — if either is non-empty it is enforced **regardless of step 1**, so an allow-list still requires a matching logged-in user even with authorization disabled.
+3. With authorization off **and** both lists empty, the UI is fully public: anyone who can reach the URL can read who did what, when, and to which record. That combination is for local development only.
+
+Notes:
+
+* **Gate:** `viewActivityLogUi` is auto-registered (see `ActivitylogUiServiceProvider`). By default it allows any authenticated user and narrows to the lists above once you set them. Define your own to replace that logic.
+* **Roles** use `hasAnyRole()` or `hasRole()` if your user model provides them (Spatie Permission and similar). Without either method, a user cannot match a role and is denied.
+* **`route.middleware`** replaces the base stack (`['web']`) only. Authentication and the access middleware are appended afterwards and cannot be removed by it.
+* **Requires a named `login` route** when authorization is on and a guest opens the UI in a browser — that is Laravel's `auth` middleware redirect. Apps without auth scaffolding should configure `redirectGuestsTo()` or leave authorization off. JSON requests get a `401` instead.
 
 ---
 

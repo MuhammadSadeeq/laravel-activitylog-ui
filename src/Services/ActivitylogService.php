@@ -2,26 +2,91 @@
 
 namespace MuhammadSadeeq\ActivitylogUi\Services;
 
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use MuhammadSadeeq\ActivitylogUi\Models\Activity;
 
 class ActivitylogService
 {
     /**
      * Get filtered activities with pagination.
+     *
+     * $anchorId pins the result set to the rows that existed when the first page
+     * was read. Offsets are counted from the top of a list ordered newest-first,
+     * so on an audit log — which is written to continuously, by definition — every
+     * activity recorded between two page requests pushed the whole list down and
+     * the next page repeated rows the user had already seen. Ten new rows while
+     * reading page 1 meant page 2 opened with the last ten rows of page 1.
      */
-    public function getActivities(array $filters = [], int $perPage = 25): LengthAwarePaginator
+    public function getActivities(array $filters = [], int $perPage = 25, ?array $anchor = null): LengthAwarePaginator
     {
+        $model = new Activity;
+
         $query = Activity::query()
             ->with(config('activitylog-ui.performance.eager_load_relations', ['causer', 'subject']))
-            ->latest('id');
+            // By time first, then by key as a tiebreak.
+            //
+            // Ordering by the key alone assumed the key rises with created_at.
+            // It usually does, but a backdated or imported activity breaks it —
+            // and the day headings are derived from created_at, so the list
+            // rendered "20 January 2025" above "27 June 2025" on the very first
+            // page of the test data. The key still decides ties, which keeps
+            // pagination stable for rows sharing a timestamp.
+            ->orderByDesc($model->qualifyColumn('created_at'))
+            ->orderByDesc($model->getQualifiedKeyName());
 
         $query = $this->applyFilters($query, $filters);
 
+        $this->applyAnchor($query, $model, $anchor);
+
         return $query->paginate($perPage);
+    }
+
+    /**
+     * Pin later pages to the rows that existed when the first one was read.
+     *
+     * The anchor has to be a prefix of the ordering, which means it has to be
+     * the same pair the query sorts by. An earlier version filtered on the key
+     * alone while the list was ordered by created_at, and the two disagree the
+     * moment anything is backdated or imported: on the reference dataset the
+     * newest row by time sat at key 160,488 while page one also held key
+     * 203,493, so attaching the anchor cut 44,523 activities — a fifth of the
+     * log — out of every page after the first, with the footer still reporting
+     * the full count.
+     *
+     * The pair is compared rather than the key alone, so this no longer asks
+     * whether the key increments. That is a large improvement for random UUID
+     * and ULID keys and not a complete fix: within a single timestamp the key is
+     * still the tiebreak, so a row inserted at the anchor's exact time with a
+     * lower random key does join the frozen set. The window is one timestamp
+     * wide instead of the whole listing, and narrower still because the anchor
+     * carries microseconds, but it is not zero.
+     *
+     * @param  array{time: string, id: int|string}|null  $anchor
+     */
+    protected function applyAnchor(Builder $query, Activity $model, ?array $anchor): void
+    {
+        if ($anchor === null) {
+            return;
+        }
+
+        $createdAt = $model->qualifyColumn('created_at');
+        $key = $model->getQualifiedKeyName();
+
+        $query->where(function (Builder $outer) use ($createdAt, $key, $anchor) {
+            $outer
+                ->where($createdAt, '<', $anchor['time'])
+                ->orWhere(function (Builder $tie) use ($createdAt, $key, $anchor) {
+                    $tie->where($createdAt, '=', $anchor['time'])
+                        ->where($key, '<=', $anchor['id']);
+                });
+        });
     }
 
     /**
@@ -52,19 +117,22 @@ class ActivitylogService
         }
 
         // Causer filters
-        if (!empty($filters['causer_type']) || !empty($filters['causer_id'])) {
-            $causerId = isset($filters['causer_id']) && $filters['causer_id'] !== ''
-                ? (is_numeric($filters['causer_id']) ? (int) $filters['causer_id'] : $filters['causer_id'])
-                : null;
-            $query->byCauser($filters['causer_type'] ?? null, $causerId);
+        //
+        // No re-casting of the id here: sanitizeId() already chose int or string,
+        // and is_numeric() would turn a 26-digit ULID into PHP_INT_MAX.
+        $causerType = $this->presentFilter($filters, 'causer_type');
+        $causerId = $this->presentFilter($filters, 'causer_id');
+
+        if ($causerType !== null || $causerId !== null) {
+            $query->byCauser($causerType, $causerId);
         }
 
         // Subject filters
-        if (!empty($filters['subject_type']) || !empty($filters['subject_id'])) {
-            $subjectId = isset($filters['subject_id']) && $filters['subject_id'] !== ''
-                ? (is_numeric($filters['subject_id']) ? (int) $filters['subject_id'] : $filters['subject_id'])
-                : null;
-            $query->bySubject($filters['subject_type'] ?? null, $subjectId);
+        $subjectType = $this->presentFilter($filters, 'subject_type');
+        $subjectId = $this->presentFilter($filters, 'subject_id');
+
+        if ($subjectType !== null || $subjectId !== null) {
+            $query->bySubject($subjectType, $subjectId);
         }
 
         // Event type filters
@@ -78,6 +146,26 @@ class ActivitylogService
         }
 
         return $query;
+    }
+
+    /**
+     * A filter value the caller actually supplied, or null.
+     *
+     * empty() cannot be used for this: it calls '0' absent, so a causer or
+     * subject whose key really is 0 — legal in MySQL, and present in plenty of
+     * migrated data — passed validation in the controller and was then dropped
+     * here without a word, listing the whole log as though no filter had been
+     * asked for.
+     */
+    protected function presentFilter(array $filters, string $key): int|string|null
+    {
+        $value = $filters[$key] ?? null;
+
+        if ($value === null || $value === '' || is_array($value)) {
+            return null;
+        }
+
+        return is_int($value) ? $value : (string) $value;
     }
 
     /**
@@ -142,13 +230,342 @@ class ActivitylogService
     }
 
     /**
+     * Version suffix for the filter-option cache keys.
+     *
+     * Bump this whenever the cached row shape OR its semantics change, so an
+     * upgrade cannot serve a payload written by an older release. v3 deduplicated
+     * causers by type and id; v4 stopped letting an email reach the display name
+     * when filters.expose_causer_email is off, so a v3 entry can still be
+     * publishing addresses the flag is meant to withhold. v5 dropped the
+     * generated Tailwind class strings from the event types.
+     */
+    protected const FILTER_CACHE_VERSION = 'v5';
+
+    /**
+     * Names of the filter-option caches, for invalidation.
+     */
+    protected const FILTER_CACHES = ['causers', 'subject_types', 'event_types', 'event_types_with_styling'];
+
+    /**
+     * Read a cached list of rows, recomputing when the stored value is not the
+     * plain array of arrays that was written.
+     *
+     * These caches used to hold Collection objects. If such a payload cannot be
+     * unserialized on read — a class the reading process cannot load, a store
+     * shared with another application — PHP hands back __PHP_Incomplete_Class,
+     * which then violated the declared Collection return type and took the whole
+     * dashboard down with an unhandled TypeError (issue #12). Storing plain
+     * arrays removes the class dependency, and validating on read means anything
+     * unexpected is discarded and recomputed rather than returned.
+     *
+     * @param  callable(): array<int, array<string, mixed>>  $compute
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function rememberFilterOptions(string $name, callable $compute): Collection
+    {
+        $key = $this->filterCacheKey($name);
+        $cached = $this->readFilterOptions($name, $key);
+
+        if ($cached !== null) {
+            return collect($cached);
+        }
+
+        // Single-flight from here. The causer list is a DISTINCT over the whole
+        // activity table with the causers eager-loaded behind it, so when the TTL
+        // expires under load every request in flight used to run that scan at
+        // once — the slower it is, the more of them pile onto it. One computes;
+        // the rest wait briefly and read what it wrote.
+        $lock = $this->cacheLock($key);
+
+        if ($lock === null) {
+            return collect($this->writeFilterOptions($key, $compute()));
+        }
+
+        try {
+            $lock->block($this->lockWaitSeconds());
+        } catch (LockTimeoutException $e) {
+            // Whoever holds it is still working. One more read first: the common
+            // case is that they finished during the wait, and taking their result
+            // is the whole point of having waited.
+            $cached = $this->readFilterOptions($name, $key);
+
+            return collect($cached ?? $this->writeFilterOptions($key, $compute()));
+        } catch (\Exception $e) {
+            // Not a timeout — the lock backend itself failed. Reported, because
+            // silently degrading to a full scan on every request is exactly the
+            // situation this whole mechanism exists to avoid.
+            //
+            // Exception, not Throwable: every store signals failure with one, so
+            // an Error here is a defect in this package rather than an unhealthy
+            // backend. Catching those too turned a call to a method that did not
+            // exist into a warning nobody read, with the single-flight silently
+            // disabled and every request running the scan it was added to avoid.
+            $this->reportCacheFailure($key, 'lock', $e);
+
+            return collect($this->writeFilterOptions($key, $compute()));
+        }
+
+        try {
+            $cached = $this->readFilterOptions($name, $key);
+
+            if ($cached !== null) {
+                return collect($cached);
+            }
+
+            return collect($this->writeFilterOptions($key, $compute()));
+        } finally {
+            try {
+                $lock->release();
+            } catch (\Throwable $e) {
+                // Already gone if it outlived its own TTL. Reported all the same:
+                // every store checks ownership before releasing, so a failure
+                // here means the lock backend is unhealthy rather than merely
+                // that someone else took over.
+                $this->reportCacheFailure($key, 'unlock', $e);
+            }
+        }
+    }
+
+    /**
+     * Read a filter-option cache, returning null when there is nothing usable.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    protected function readFilterOptions(string $name, string $key): ?array
+    {
+        // Eviction is inside the guard too: a store that dies between the read and
+        // the forget would otherwise throw straight out of the service.
+        try {
+            $cached = Cache::get($key);
+
+            if ($this->isValidRows($name, $cached)) {
+                return $cached;
+            }
+
+            if ($cached !== null) {
+                Cache::forget($key);
+            }
+        } catch (\Throwable $e) {
+            $this->reportCacheFailure($key, 'read', $e);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return array<int, array<string, mixed>>
+     */
+    protected function writeFilterOptions(string $key, array $rows): array
+    {
+        try {
+            Cache::put($key, $rows, config('activitylog-ui.performance.cache_ttl', 3600));
+        } catch (\Throwable $e) {
+            $this->reportCacheFailure($key, 'write', $e);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * A lock for the recompute of one cache key, or null when the configured
+     * store cannot provide one.
+     *
+     * Most shipped stores are lock providers, but what they coordinate differs:
+     * the array driver locks within one PHP process only, and the null driver's
+     * lock always succeeds. Neither serialises anything across requests, which
+     * is correct — with no cache there is nothing to share — but it does mean a
+     * lock acquired is not by itself proof of exclusivity. A store that is not a
+     * provider at all degrades to the previous behaviour rather than failing.
+     */
+    protected function cacheLock(string $key): ?Lock
+    {
+        try {
+            if (! Cache::getStore() instanceof LockProvider) {
+                return null;
+            }
+
+            // Long enough for the scan this guards, short enough that a worker
+            // killed mid-compute does not park every other request behind a lock
+            // nobody will ever release. Both bounds are configurable, and were
+            // documented as such before anything read them.
+            return Cache::lock($key . ':recompute', $this->lockTtlSeconds());
+        } catch (\Exception $e) {
+            $this->reportCacheFailure($key, 'lock', $e);
+
+            return null;
+        }
+    }
+
+    /**
+     * How long a request waits for whoever is already recomputing.
+     */
+    protected function lockWaitSeconds(): int
+    {
+        return max(0, (int) config('activitylog-ui.performance.filter_lock_wait', 3));
+    }
+
+    /**
+     * How long that recompute may hold the lock before it is presumed dead.
+     */
+    protected function lockTtlSeconds(): int
+    {
+        return max(1, (int) config('activitylog-ui.performance.filter_lock_ttl', 30));
+    }
+
+    /**
+     * Report a cache failure without failing the request.
+     *
+     * Degrading to a recomputed value is correct, but doing it silently means a
+     * permanently broken cache store turns into permanent full-table scans with
+     * no signal at all. Logged once per key and operation per request.
+     *
+     * @var array<string, true>
+     */
+    protected array $reportedCacheFailures = [];
+
+    protected function reportCacheFailure(string $key, string $operation, \Throwable $e): void
+    {
+        if (isset($this->reportedCacheFailures["{$key}:{$operation}"])) {
+            return;
+        }
+
+        $this->reportedCacheFailures["{$key}:{$operation}"] = true;
+
+        Log::warning("Activity log UI cache {$operation} failed; falling back to a live query.", [
+            'key' => $key,
+            'error' => $e->getMessage(),
+        ]);
+    }
+
+    /**
+     * Build a versioned cache key for a filter-option list.
+     */
+    protected function filterCacheKey(string $name): string
+    {
+        // Scoped to the source: the activity table and connection are resolved
+        // from the host's configured model, so pointing the UI somewhere else must
+        // not serve the previous table's causers and event types. Across tenants
+        // that is a disclosure, not merely stale data.
+        //
+        // Scoped to the display settings too, so toggling expose_causer_email or
+        // changing causer_name_attributes takes effect immediately rather than
+        // after the TTL — the causer list embeds the resolved display name.
+        return config('activitylog-ui.performance.cache_prefix')
+            . '.' . self::FILTER_CACHE_VERSION
+            . '.' . Activity::sourceFingerprint()
+            . '.' . $this->displayFingerprint()
+            . '.' . $name;
+    }
+
+    /**
+     * Fingerprint of the settings that shape a cached causer's display name.
+     */
+    protected function displayFingerprint(): string
+    {
+        return substr(sha1(json_encode([
+            config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']),
+            (bool) config('activitylog-ui.filters.expose_causer_email', false),
+        ])), 0, 8);
+    }
+
+    /**
+     * Keys each filter-option cache is required to carry, so a payload written
+     * for one cache cannot be served from another and a half-written row is
+     * rejected rather than rendered blank.
+     */
+    protected const FILTER_CACHE_KEYS = [
+        'causers' => ['id', 'type', 'name', 'label'],
+        'subject_types' => ['value', 'label', 'full_name'],
+        'event_types' => ['value', 'label'],
+        'event_types_with_styling' => ['value', 'label', 'icon'],
+    ];
+
+    /**
+     * Whether a cached value is exactly what this particular cache writes.
+     *
+     * "A list of arrays" is not enough. It would accept event rows served from
+     * the causers key, an associative array that JSON-encodes to an object the
+     * frontend cannot map over, and — the case this all exists for — a row whose
+     * nested value is an unresolvable object.
+     */
+    protected function isValidRows(string $name, mixed $value): bool
+    {
+        if (!is_array($value) || !array_is_list($value)) {
+            return false;
+        }
+
+        $required = self::FILTER_CACHE_KEYS[$name] ?? [];
+
+        foreach ($value as $row) {
+            if (!is_array($row)) {
+                return false;
+            }
+
+            foreach ($required as $key) {
+                if (!array_key_exists($key, $row)) {
+                    return false;
+                }
+            }
+
+            if (!$this->isPlainData($row)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether a value is made only of scalars, nulls and arrays of the same.
+     *
+     * Any object fails, including __PHP_Incomplete_Class, at any depth.
+     */
+    protected function isPlainData(mixed $value): bool
+    {
+        if ($value === null || is_scalar($value)) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (!$this->isPlainData($item)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Discard every filter-option cache. Call after bulk-importing or pruning
+     * activities so the dropdowns do not lag behind by up to the cache TTL.
+     */
+    public function flushFilterOptions(): void
+    {
+        foreach (self::FILTER_CACHES as $name) {
+            Cache::forget($this->filterCacheKey($name));
+        }
+    }
+
+    /**
      * Get available causers for filtering.
      */
     public function getAvailableCausers(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.causers';
+        // When email exposure is off, it must not sneak back in through the display
+        // name: causer_name falls back to email, so a causer without a name would
+        // otherwise publish the very address the flag withholds.
+        $displayAttributes = (array) config('activitylog-ui.ui.causer_name_attributes', ['name', 'email']);
 
-        return Cache::remember($cacheKey, 3600, function () {
+        if (!config('activitylog-ui.filters.expose_causer_email', false)) {
+            $displayAttributes = array_values(array_diff($displayAttributes, ['email']));
+        }
+
+        return $this->rememberFilterOptions('causers', function () use ($displayAttributes) {
             return Activity::select('causer_type', 'causer_id')
                 ->whereNotNull('causer_type')
                 ->whereNotNull('causer_id')
@@ -158,17 +575,46 @@ class ActivitylogService
                 ->filter(function ($activity) {
                     return $activity->causer !== null;
                 })
-                ->map(function ($activity) {
+                ->map(function ($activity) use ($displayAttributes) {
+                    $name = $activity->causerNameUsing($displayAttributes);
+
                     return [
                         'id' => $activity->causer_id,
                         'type' => $activity->causer_type,
-                        'name' => $activity->causer_name,
-                        'label' => $activity->causer_name . ' (' . class_basename($activity->causer_type) . ')',
+                        'name' => $name,
+                        'email' => $this->causerEmail($activity),
+                        'label' => $name . ' (' . class_basename($activity->causer_type) . ')',
                     ];
                 })
-                ->unique('id')
-                ->values();
+                // Keyed by type AND id: causers are polymorphic, so App\Models\User#7
+                // and App\Models\Admin#7 are different people. Deduplicating on id
+                // alone dropped one of them from the dropdown entirely.
+                ->unique(fn (array $causer) => $causer['type'] . '#' . $causer['id'])
+                ->values()
+                ->all();
         });
+    }
+
+    /**
+     * Resolve a causer's email address for the filter dropdown.
+     *
+     * Reading the attribute can run a host accessor or an encrypted cast, either
+     * of which may throw. An optional display field must never take the whole
+     * filter panel down, so failures resolve to null.
+     */
+    protected function causerEmail(Activity $activity): ?string
+    {
+        if (!config('activitylog-ui.filters.expose_causer_email', false)) {
+            return null;
+        }
+
+        try {
+            $email = $activity->causer->email ?? null;
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return is_scalar($email) ? (string) $email : null;
     }
 
     /**
@@ -176,9 +622,7 @@ class ActivitylogService
      */
     public function getAvailableSubjectTypes(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.subject_types';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('subject_types', function () {
             return Activity::select('subject_type')
                 ->whereNotNull('subject_type')
                 ->distinct()
@@ -190,7 +634,8 @@ class ActivitylogService
                         'full_name' => $type,
                     ];
                 })
-                ->values();
+                ->values()
+                ->all();
         });
     }
 
@@ -199,9 +644,7 @@ class ActivitylogService
      */
     public function getAvailableEventTypes(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.event_types';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('event_types', function () {
             return Activity::select('event')
                 ->whereNotNull('event')
                 ->distinct()
@@ -212,7 +655,8 @@ class ActivitylogService
                         'label' => ucfirst($event),
                     ];
                 })
-                ->values();
+                ->values()
+                ->all();
         });
     }
 
@@ -221,115 +665,27 @@ class ActivitylogService
      */
     public function getEventTypesWithStyling(): Collection
     {
-        $cacheKey = config('activitylog-ui.performance.cache_prefix') . '.event_types_with_styling';
-
-        return Cache::remember($cacheKey, 3600, function () {
+        return $this->rememberFilterOptions('event_types_with_styling', function () {
             $eventTypes = Activity::select('event')
                 ->whereNotNull('event')
                 ->distinct()
                 ->pluck('event')
                 ->values();
 
-            return $eventTypes->map(function ($event, $index) {
-                $styling = $this->generateEventTypeStyling($event, $index);
-
+            // The colour, gradient and badge/timeline class strings that used
+            // to be here described Tailwind utilities for a stylesheet the
+            // package no longer ships, and they were the bulk of this payload —
+            // roughly 500 bytes per event type, sent on every dashboard load and
+            // used by nothing. The interface derives an event's appearance from
+            // its name; what the server has to say is the name itself.
+            return $eventTypes->map(function ($event) {
                 return [
                     'value' => $event,
-                    'label' => ucfirst($event),
-                    'colors' => $styling['colors'],
-                    'gradient' => $styling['gradient'],
-                    'icon' => $styling['icon'],
-                    'badge_classes' => $styling['badge_classes'],
-                    'timeline_classes' => $styling['timeline_classes'],
+                    'label' => ucfirst(str_replace('_', ' ', $event)),
+                    'icon' => $this->selectIconForEventType($event),
                 ];
-            });
+            })->all();
         });
-    }
-
-    /**
-     * Generate consistent styling for an activity type.
-     */
-    protected function generateEventTypeStyling(string $eventType, int $index): array
-    {
-        // Get predefined colors from config first
-        $configColors = config('activitylog-ui.analytics.chart_colors', []);
-
-        if (isset($configColors[$eventType])) {
-            // Use configured color if available
-            $baseColor = $this->getColorName($configColors[$eventType]);
-        } else {
-            // Generate color based on event type characteristics
-            $baseColor = $this->selectColorForEventType($eventType, $index);
-        }
-
-        return [
-            'colors' => [
-                'primary' => $baseColor,
-                'light' => $this->getColorShade($baseColor, 100),
-                'medium' => $this->getColorShade($baseColor, 500),
-                'dark' => $this->getColorShade($baseColor, 800),
-            ],
-            'gradient' => [
-                'from' => $this->getColorShade($baseColor, 500),
-                'to' => $this->getColorShade($baseColor, 600),
-                'dark_from' => $this->getColorShade($baseColor, 400),
-                'dark_to' => $this->getColorShade($baseColor, 500),
-            ],
-            'icon' => $this->selectIconForEventType($eventType),
-            'badge_classes' => $this->generateBadgeClasses($baseColor),
-            'timeline_classes' => $this->generateTimelineClasses($baseColor),
-        ];
-    }
-
-    /**
-     * Select appropriate color for event type based on semantic meaning.
-     */
-    protected function selectColorForEventType(string $eventType, int $fallbackIndex): string
-    {
-        // Semantic color mapping for common event types
-        $semanticColors = [
-            'created' => 'green',
-            'updated' => 'blue',
-            'deleted' => 'red',
-            'restored' => 'yellow',
-            'login' => 'purple',
-            'logout' => 'indigo',
-            'system' => 'pink',
-            'error' => 'red',
-            'warning' => 'amber',
-            'info' => 'blue',
-            'success' => 'green',
-            'failed' => 'red',
-            'completed' => 'green',
-            'started' => 'blue',
-            'cancelled' => 'gray',
-            'pending' => 'yellow',
-            'approved' => 'green',
-            'rejected' => 'red',
-            'published' => 'green',
-            'drafted' => 'gray',
-            'archived' => 'slate',
-        ];
-
-        // Check for exact match first
-        if (isset($semanticColors[$eventType])) {
-            return $semanticColors[$eventType];
-        }
-
-        // Check for partial matches (e.g., "user_login" contains "login")
-        foreach ($semanticColors as $keyword => $color) {
-            if (str_contains($eventType, $keyword)) {
-                return $color;
-            }
-        }
-
-        // Fallback to a color palette rotation
-        $colorPalette = [
-            'blue', 'green', 'purple', 'pink', 'indigo', 'cyan',
-            'teal', 'emerald', 'lime', 'amber', 'orange', 'rose'
-        ];
-
-        return $colorPalette[$fallbackIndex % count($colorPalette)];
     }
 
     /**
@@ -364,48 +720,6 @@ class ActivitylogService
     }
 
     /**
-     * Convert hex color to color name (simplified mapping).
-     */
-    protected function getColorName(string $hexColor): string
-    {
-        $colorMap = [
-            '#10b981' => 'green',
-            '#3b82f6' => 'blue',
-            '#ef4444' => 'red',
-            '#f59e0b' => 'yellow',
-            '#8b5cf6' => 'purple',
-            '#6366f1' => 'indigo',
-            '#ec4899' => 'pink',
-        ];
-
-        return $colorMap[$hexColor] ?? 'gray';
-    }
-
-    /**
-     * Get color shade for Tailwind classes.
-     */
-    protected function getColorShade(string $color, int $shade): string
-    {
-        return "{$color}-{$shade}";
-    }
-
-    /**
-     * Generate badge classes for an activity type.
-     */
-    protected function generateBadgeClasses(string $color): string
-    {
-        return "bg-{$color}-100 dark:bg-{$color}-900/30 text-{$color}-800 dark:text-{$color}-300 border-{$color}-200 dark:border-{$color}-800";
-    }
-
-    /**
-     * Generate timeline classes for an activity type.
-     */
-    protected function generateTimelineClasses(string $color): string
-    {
-        return "bg-gradient-to-br from-{$color}-500 to-{$color}-600 dark:from-{$color}-400 dark:to-{$color}-500";
-    }
-
-    /**
      * Get recent activities for real-time updates.
      */
     public function getRecentActivities(int $hours = 1, int $limit = 50): Collection
@@ -415,47 +729,6 @@ class ActivitylogService
             ->limit($limit)
             ->latest('id')
             ->get();
-    }
-
-    /**
-     * Search activities with autocomplete suggestions.
-     */
-    public function searchWithSuggestions(string $query): array
-    {
-        $activities = Activity::search($query)
-            ->with(['causer', 'subject'])
-            ->limit(10)
-            ->get();
-
-        $suggestions = [
-            'descriptions' => Activity::where('description', 'like', "%{$query}%")
-                ->distinct()
-                ->limit(5)
-                ->pluck('description')
-                ->toArray(),
-            'causers' => Activity::whereHas('causer', function ($q) use ($query) {
-                $q->where('name', 'like', "%{$query}%")
-                  ->orWhere('email', 'like', "%{$query}%");
-            })
-            ->with('causer')
-            ->limit(5)
-            ->get()
-            ->map(function ($activity) {
-                return [
-                    'id' => $activity->causer_id,
-                    'name' => $activity->causer_name,
-                    'type' => $activity->causer_type,
-                ];
-            })
-            ->unique('id')
-            ->values()
-            ->toArray(),
-        ];
-
-        return [
-            'activities' => $activities,
-            'suggestions' => $suggestions,
-        ];
     }
 
     /**
@@ -523,68 +796,120 @@ class ActivitylogService
 
     /**
      * Get search suggestions for autocomplete.
+     *
+     * Every limit here is in the query rather than applied to the result. The
+     * previous form hydrated the entire activity table with its causers to find
+     * five names, and pulled every distinct matching description into memory
+     * before taking five of those — at 200,000 activities the endpoint ran out
+     * of memory rather than answering.
      */
     public function getSearchSuggestions(string $query): Collection
     {
-        $suggestions = collect();
-
-        if (strlen($query) >= 2) {
-            // Get causer suggestions
-            $causers = Activity::whereNotNull('causer_id')
-                ->with('causer')
-                ->get()
-                ->pluck('causer')
-                ->filter()
-                ->unique('id')
-                ->filter(function ($causer) use ($query) {
-                    return stripos($causer->name ?? '', $query) !== false ||
-                           stripos($causer->email ?? '', $query) !== false;
-                })
-                ->take(5)
-                ->map(function ($causer) {
-                    return [
-                        'value' => $causer->name,
-                        'label' => $causer->name . ' (' . $causer->email . ')',
-                        'type' => 'User'
-                    ];
-                });
-
-            // Get description suggestions
-            $descriptions = Activity::where('description', 'like', "%{$query}%")
-                ->distinct()
-                ->pluck('description')
-                ->take(5)
-                ->map(function ($description) {
-                    return [
-                        'value' => $description,
-                        'label' => $description,
-                        'type' => 'Description'
-                    ];
-                });
-
-            // Get subject type suggestions
-            $subjectTypes = Activity::where('subject_type', 'like', "%{$query}%")
-                ->distinct()
-                ->pluck('subject_type')
-                ->take(3)
-                ->map(function ($type) {
-                    return [
-                        'value' => $type,
-                        'label' => class_basename($type),
-                        'type' => 'Model'
-                    ];
-                });
-
-            $suggestions = $causers->concat($descriptions)->concat($subjectTypes);
+        if (strlen($query) < 2) {
+            return collect();
         }
 
-        return $suggestions->take(10);
+        return collect()
+            ->concat($this->causerSuggestions($query))
+            ->concat($this->columnSuggestions('description', $query, 5, fn (string $value) => [
+                'value' => $value,
+                'label' => $value,
+                'type' => 'Description',
+            ]))
+            ->concat($this->columnSuggestions('subject_type', $query, 3, fn (string $value) => [
+                'value' => $value,
+                'label' => class_basename($value),
+                'type' => 'Model',
+            ]))
+            ->take(10)
+            ->values();
+    }
+
+    /**
+     * Causer suggestions, drawn from the same list the filter dropdown uses.
+     *
+     * Which means they are already deduplicated by type and id, already cached,
+     * and already resolved through the configured display attributes — so this
+     * cannot publish an email that filters.expose_causer_email withholds, which
+     * the previous form did in both the value it matched on and the label it
+     * returned.
+     *
+     * @return Collection<int, array<string, string>>
+     */
+    protected function causerSuggestions(string $query): Collection
+    {
+        $exposeEmail = (bool) config('activitylog-ui.filters.expose_causer_email', false);
+
+        return $this->getAvailableCausers()
+            ->filter(function (array $causer) use ($query, $exposeEmail) {
+                if (stripos((string) $causer['name'], $query) !== false) {
+                    return true;
+                }
+
+                return $exposeEmail && stripos((string) ($causer['email'] ?? ''), $query) !== false;
+            })
+            ->take(5)
+            ->map(fn (array $causer) => [
+                'value' => (string) $causer['name'],
+                'label' => (string) $causer['label'],
+                'type' => 'User',
+            ])
+            ->values();
+    }
+
+    /**
+     * Distinct values of one activity column matching a substring.
+     *
+     * @param  callable(string): array<string, string>  $format
+     * @return Collection<int, array<string, string>>
+     */
+    protected function columnSuggestions(string $column, string $query, int $limit, callable $format): Collection
+    {
+        $model = new Activity;
+        $grammar = $model->getConnection()->getQueryGrammar();
+
+        return Activity::query()
+            ->whereNotNull($column)
+            // ESCAPE stated rather than assumed. MySQL and Postgres treat
+            // backslash as the escape character by default; SQLite has none
+            // unless one is named, so there the escaping would have reached the
+            // driver as two literal characters and a search for a literal '%'
+            // would have matched nothing.
+            //
+            // '!' rather than a backslash, because a backslash is itself an
+            // escape inside a MySQL string literal and ESCAPE '\' is a syntax
+            // error there.
+            ->whereRaw(
+                $grammar->wrap($model->qualifyColumn($column)) . " LIKE ? ESCAPE '!'",
+                ['%' . $this->escapeLike($query) . '%']
+            )
+            ->distinct()
+            ->limit($limit)
+            ->pluck($column)
+            ->filter(fn ($value) => is_string($value) && $value !== '')
+            ->map($format)
+            ->values();
+    }
+
+    /**
+     * Neutralise the wildcards LIKE would otherwise read as syntax.
+     *
+     * Bindings keep this safe either way; what they do not do is stop a typed
+     * '%' from matching the whole table and a typed '_' from matching more than
+     * the user asked for.
+     *
+     * Paired with the ESCAPE '!' clause above. The escape character has to be
+     * escaped first, or a query containing '!' would consume the '%' after it.
+     */
+    protected function escapeLike(string $value): string
+    {
+        return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $value);
     }
 
     /**
      * Get related activities for a given subject.
      */
-    public function getRelatedActivities(string $subjectType, int $subjectId, int $excludeId = null): Collection
+    public function getRelatedActivities(string $subjectType, int|string $subjectId, int|string|null $excludeId = null): Collection
     {
         $query = Activity::where('subject_type', $subjectType)
             ->where('subject_id', $subjectId)

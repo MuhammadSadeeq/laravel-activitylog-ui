@@ -15,89 +15,33 @@
     <link rel="icon" type="image/x-icon" href="{{ asset('vendor/activitylog-ui/images/favicon.ico') }}">
     @endif
 
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.bunny.net">
-    <link href="https://fonts.bunny.net/css?family=inter:400,500,600,700&display=swap" rel="stylesheet" />
+    {{--
+        One stylesheet, served by the package and cached for a year against a
+        content hash. It replaces the Tailwind Play CDN, which shipped a ~400KB
+        script that generated the page's styles in the browser on every load —
+        a visible flash of unstyled content before an audit log could be read,
+        and a dependency on a third-party CDN staying up.
 
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+        The typeface is the system stack for the same reason: no webfont
+        request, no swap, and it looks native wherever it runs.
+    --}}
+    <link rel="stylesheet" href="{{ route('activitylog-ui.assets.css', ['version' => \MuhammadSadeeq\ActivitylogUi\Http\Controllers\AssetController::version()]) }}">
+
     <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif'],
-                    },
-                    colors: {
-                        gray: {
-                            50: '#f9fafb',
-                            100: '#f3f4f6',
-                            200: '#e5e7eb',
-                            300: '#d1d5db',
-                            400: '#9ca3af',
-                            500: '#6b7280',
-                            600: '#4b5563',
-                            700: '#374151',
-                            800: '#1f2937',
-                            900: '#111827',
-                        }
-                    }
-                }
-            }
-        }
+        // Applied before first paint so the page never flashes light then dark.
+        (function () {
+            try {
+                var stored = localStorage.getItem('darkMode');
+                var on = stored === null
+                    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                    : stored === 'true';
+                document.documentElement.classList.toggle('dark', on);
+            } catch (e) {}
+        })();
     </script>
 
     <!-- Alpine.js -->
-    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-
-    <!-- Chart.js for analytics -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <!-- Custom CSS -->
-    <style>
-        [x-cloak] { display: none !important; }
-
-        /* Custom scrollbar */
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: #f3f4f6;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #d1d5db;
-            border-radius: 2px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #9ca3af;
-        }
-
-        /* Loading animation */
-        .loading-pulse {
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-
-        /* Activity status colors */
-        .status-created { @apply bg-green-100 text-green-800; }
-        .status-updated { @apply bg-blue-100 text-blue-800; }
-        .status-deleted { @apply bg-red-100 text-red-800; }
-        .status-restored { @apply bg-yellow-100 text-yellow-800; }
-        .status-custom { @apply bg-purple-100 text-purple-800; }
-
-        .dark .custom-scrollbar::-webkit-scrollbar-track {
-            background: #374151;
-        }
-
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #6b7280;
-        }
-
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #9ca3af;
-        }
-    </style>
 
     <!-- Global Alpine.js Functions -->
     <script>
@@ -110,8 +54,13 @@
                     initialized: false,
                     filterTimeout: null,
 
-                    expanded: true,
-                    showAdvanced: false,
+                    // Open on a wide screen, where the panel is a sidebar beside
+                    // the results. Closed on a narrow one, where it would
+                    // otherwise push the activities the user came to read off
+                    // the bottom of the screen.
+                    expanded: typeof window !== 'undefined' && window.matchMedia
+                        ? window.matchMedia('(min-width: 64rem)').matches
+                        : true,
 
                     defaultFilters() {
                         return {
@@ -121,6 +70,7 @@
                             end_date: '',
                             event_types: [],
                             causer_id: null,
+                            causer_type: null,
                             subject_type: '',
                         };
                     },
@@ -147,12 +97,28 @@
                     causerSearch: '',
                     selectedCauser: null,
 
+                    // The saved view awaiting a delete confirmation. Declared
+                    // here rather than spread over this object in the template:
+                    // spreading evaluates the getters below once and freezes
+                    // them, which silently broke hasActiveFilters and
+                    // selectedCauserText.
+                    pendingDelete: null,
+
                     // Initialization
                     async init() {
                         if (this.initialized) return;
 
                         // init state
                         this.filters = this.defaultFilters();
+
+                        // Crossing the sidebar breakpoint re-opens the panel.
+                        // Without this, widening a window while it is collapsed
+                        // hides the only control that could reopen it.
+                        if (window.matchMedia) {
+                            const wide = window.matchMedia('(min-width: 64rem)');
+                            const sync = event => { if (event.matches) this.expanded = true; };
+                            wide.addEventListener ? wide.addEventListener('change', sync) : wide.addListener(sync);
+                        }
                         
                         this.initialized = true;
 
@@ -166,16 +132,25 @@
                         });
                         @endif
 
-                        // Restore persisted state
-                        this.restorePersistedState();
+                        try {
+                            // Restore persisted state
+                            this.restorePersistedState();
 
-                        await this.loadCausers();
-                        this.filteredCausers = this.availableCausers;
-
-                        // Emit event that filter panel is ready with initial filters
-                        window.dispatchEvent(new CustomEvent('filter-panel-ready', {
-                            detail: this.filters
-                        }));
+                            await this.loadCausers();
+                            this.filteredCausers = this.availableCausers;
+                        } catch (error) {
+                            // Reading localStorage can throw outright (opaque origin,
+                            // storage disabled). Carry on with default filters rather
+                            // than leaving the panel half-initialised.
+                            console.error('Filter panel initialization failed:', error);
+                        } finally {
+                            // This event is the dashboard's only trigger for its first
+                            // data load, so it has to fire even when the above failed —
+                            // otherwise the page sits empty having never made a request.
+                            window.dispatchEvent(new CustomEvent('filter-panel-ready', {
+                                detail: this.filters
+                            }));
+                        }
                     },
 
                     async loadCausers() {
@@ -199,7 +174,7 @@
                                     return {
                                         value: eventType.value,
                                         label: eventType.label,
-                                        color: `bg-${window.ActivityTypeStyler.getColor(eventType.value)}-500`,
+                                        event: window.ActivityTypeStyler.getEvent(eventType.value),
                                         styling: window.ActivityTypeStyler.getEventTypeStyling(eventType.value)
                                     };
                                 });
@@ -217,10 +192,66 @@
                             this.availableEventTypes = ['created', 'updated', 'deleted', 'restored'].map(eventType => ({
                                 value: eventType,
                                 label: eventType.charAt(0).toUpperCase() + eventType.slice(1),
-                                color: `bg-${window.ActivityTypeStyler.getColor(eventType)}-500`,
+                                event: eventType,
                                 styling: window.ActivityTypeStyler.getEventTypeStyling(eventType)
                             }));
+                        } finally {
+                            // The restored causer_id was applied before this request
+                            // finished, so the label it should carry only becomes
+                            // knowable here.
+                            this.resolveSelectedCauser();
                         }
+                    },
+
+                    /**
+                     * Bring the causer control in step with filters.causer_id.
+                     *
+                     * The selection is restored from localStorage, and a saved view
+                     * may be loaded, before the causer list has arrived — and the
+                     * stored copy is a snapshot that can name someone who has since
+                     * been renamed or deleted. Resolving against the loaded list
+                     * keeps the label truthful; the fallback matters just as much,
+                     * because leaving it null showed "All users" over a filtered
+                     * result set, which reads as a broken filter rather than as a
+                     * causer the dropdown cannot name.
+                     */
+                    resolveSelectedCauser() {
+                        // Tested the way the backend tests it, which accepts every
+                        // value but null and ''. A truthiness check treated the
+                        // integer id 0 as no filter at all, so a saved view holding
+                        // one showed "All users" over a filtered list — the exact
+                        // mismatch this method exists to prevent.
+                        const causerId = this.filters.causer_id;
+
+                        if (causerId === null || causerId === undefined || causerId === '') {
+                            this.selectedCauser = null;
+                            return;
+                        }
+
+                        const match = this.availableCausers.find(c =>
+                            String(c.id) === String(causerId) &&
+                            (!this.filters.causer_type || c.type === this.filters.causer_type)
+                        );
+
+                        if (match) {
+                            this.selectedCauser = match;
+                            return;
+                        }
+
+                        // Nothing to match against — a failed options request, or a
+                        // causer no longer in the list. Name it from the filter
+                        // itself rather than claiming no filter is set.
+                        const type = this.filters.causer_type
+                            ? String(this.filters.causer_type).split('\\').pop()
+                            : 'Causer';
+
+                        this.selectedCauser = {
+                            id: causerId,
+                            type: this.filters.causer_type,
+                            name: `${type} #${causerId}`,
+                            email: null,
+                            label: `${type} #${causerId}`,
+                        };
                     },
 
                     searchCausers() {
@@ -231,14 +262,17 @@
 
                         const search = this.causerSearch.toLowerCase();
                         this.filteredCausers = this.availableCausers.filter(causer =>
-                            causer.name.toLowerCase().includes(search) ||
-                            causer.email.toLowerCase().includes(search)
+                            String(causer.name ?? '').toLowerCase().includes(search) ||
+                            String(causer.email ?? '').toLowerCase().includes(search)
                         );
                     },
 
                     selectCauser(causer) {
                         this.selectedCauser = causer;
-                        this.filters.causer_id = causer?.id || null;
+                        this.filters.causer_id = causer?.id ?? null;
+                        // Sent alongside the id: without it, picking one causer
+                        // matches every model type that happens to share that id.
+                        this.filters.causer_type = causer?.type ?? null;
                         this.applyFilters();
                     },
 
@@ -324,6 +358,7 @@
                         localStorage.removeItem('activitylog_search');
                         localStorage.removeItem('activitylog_event_types');
                         localStorage.removeItem('activitylog_causer_id');
+                        localStorage.removeItem('activitylog_causer_type');
                         localStorage.removeItem('activitylog_subject_type');
                         localStorage.removeItem('activitylog_selected_causer');
 
@@ -339,6 +374,12 @@
                             ...this.defaultFilters(),
                             ...(view.filters || {}),
                         };
+
+                        // Bring the causer control in step with the restored filter,
+                        // or the dropdown keeps showing whoever was picked last —
+                        // or "All users" — while the results are filtered.
+                        this.resolveSelectedCauser();
+
                         this.applyFilters();
                         if (window.notify) {
                             window.notify.success('View Loaded', `Loaded "${view.name}" view`);
@@ -361,6 +402,7 @@
                         const savedSearch = localStorage.getItem('activitylog_search');
                         const savedEventTypes = localStorage.getItem('activitylog_event_types');
                         const savedCauserId = localStorage.getItem('activitylog_causer_id');
+                        const savedCauserType = localStorage.getItem('activitylog_causer_type');
                         const savedSubjectType = localStorage.getItem('activitylog_subject_type');
                         const savedSelectedCauser = localStorage.getItem('activitylog_selected_causer');
 
@@ -369,7 +411,22 @@
                         if (savedEndDate) this.filters.end_date = savedEndDate;
                         if (savedSearch) this.filters.search = savedSearch;
                         if (savedSubjectType) this.filters.subject_type = savedSubjectType;
-                        if (savedCauserId) this.filters.causer_id = savedCauserId ? parseInt(savedCauserId) : null;
+                        // Kept as-is: causer ids may be UUIDs or ULIDs, which parseInt would mangle.
+                        if (savedCauserId) this.filters.causer_id = savedCauserId;
+                        // Restored with the id, or a polymorphic causer filter loses
+                        // its type and matches every model sharing that id.
+                        if (savedCauserType) {
+                            this.filters.causer_type = savedCauserType;
+                        } else if (savedCauserId && savedSelectedCauser) {
+                            // Storage written before causer_type was persisted still
+                            // holds the type on the selected-causer object; recover it
+                            // rather than silently widening the restored filter.
+                            try {
+                                this.filters.causer_type = JSON.parse(savedSelectedCauser)?.type ?? null;
+                            } catch (e) {
+                                this.filters.causer_type = null;
+                            }
+                        }
 
                         if (savedEventTypes) {
                             try {
@@ -436,265 +493,402 @@
                     }
                     @endif
                 }
-            },
-
-            // Analytics Dashboard Component
-            analyticsDashboard() {
-                return {
-                    // Initialization state
-                    initialized: false,
-
-                    loading: true,
-                    stats: {},
-                    eventTypes: [],
-                    topUsers: [],
-                    timeline: [],
-
-                    // Period selection
-                    selectedPeriod: '7',
-
-                    // Filter state
-                    currentFilters: {},
-                    hasActiveFilters: false,
-
-                    init() {
-                        // Prevent multiple initializations
-                        if (this.initialized) return;
-                        this.initialized = true;
-
-                        this.loadAnalytics();
-                    },
-
-                    async loadAnalytics(filters = {}) {
-                        this.loading = true;
-
-                        // Update filter state
-                        this.currentFilters = filters;
-                        this.hasActiveFilters = Object.keys(filters).some(key => {
-                            const value = filters[key];
-                            return value !== '' && value !== null && value !== undefined &&
-                                   (Array.isArray(value) ? value.length > 0 : true) &&
-                                   !(key === 'date_preset' && value === 'all');
-                        });
-
-                        try {
-                            // Build URL with filters
-                            const params = new URLSearchParams();
-
-                            // Add filters to URL parameters
-                            Object.keys(filters).forEach(key => {
-                                const value = filters[key];
-                                if (value !== null && value !== '' && value !== undefined) {
-                                    if (Array.isArray(value)) {
-                                        value.forEach(item => params.append(`${key}[]`, item));
-                                    } else {
-                                        params.append(key, value);
-                                    }
-                                }
-                            });
-
-                            const url = '{{ route("activitylog-ui.api.analytics") }}' + (params.toString() ? '?' + params.toString() : '');
-
-                            const response = await fetch(url, {
-                                method: 'GET',
-                                headers: {
-                                    'Accept': 'application/json',
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-                                }
-                            });
-
-                            const result = await window.ActivitylogUi.parseJsonResponse(response, 'Loading analytics');
-                            const data = result.data || {};
-
-                            this.stats = data.stats || {
-                                total: '0',
-                                today: '0',
-                                active_users: '0',
-                                this_week: '0'
-                            };
-
-                            this.eventTypes = data.event_types || [];
-                            this.topUsers = data.top_users || [];
-                            this.timeline = data.timeline || [];
-                        } catch (error) {
-                            console.error('Error loading analytics:', error);
-                            // Fallback to mock data
-                            this.stats = {
-                                total: '12,543',
-                                today: '127',
-                                active_users: '45',
-                                this_week: '1,234'
-                            };
-
-                            this.eventTypes = [
-                                { name: 'created', count: 150, percentage: 35 },
-                                { name: 'updated', count: 200, percentage: 47 },
-                                { name: 'deleted', count: 50, percentage: 12 },
-                                { name: 'restored', count: 25, percentage: 6 }
-                            ];
-
-                            this.topUsers = [
-                                { id: 1, name: 'John Doe', email: 'john@example.com', activity_count: 45 },
-                                { id: 2, name: 'Jane Smith', email: 'jane@example.com', activity_count: 38 },
-                                { id: 3, name: 'Bob Johnson', email: 'bob@example.com', activity_count: 29 }
-                            ];
-
-                            this.timeline = [
-                                { date: '2024-01-15', day_name: 'Monday', count: 85, percentage: 70 },
-                                { date: '2024-01-14', day_name: 'Sunday', count: 45, percentage: 37 },
-                                { date: '2024-01-13', day_name: 'Saturday', count: 120, percentage: 100 },
-                                { date: '2024-01-12', day_name: 'Friday', count: 95, percentage: 79 },
-                                { date: '2024-01-11', day_name: 'Thursday', count: 110, percentage: 92 },
-                                { date: '2024-01-10', day_name: 'Wednesday', count: 88, percentage: 73 },
-                                { date: '2024-01-09', day_name: 'Tuesday', count: 75, percentage: 63 }
-                            ];
-                        } finally {
-                            this.loading = false;
-                        }
-                    }
-                }
             }
         };
 
-        // Make components globally available
+        // Make components globally available. The analytics view registers its
+        // own component with Alpine.data('analyticsData'); the copy that used to
+        // live here was never referenced by any template and returned hard-coded
+        // rows for "John Doe" and dates in 2024.
         window.filterPanel = () => window.AlpineComponents.filterPanel();
-        window.analyticsDashboard = () => window.AlpineComponents.analyticsDashboard();
 
         // Dynamic Activity Type Styling System
+        /**
+         * Maps a recorded event name onto the small set of things the interface
+         * knows how to say about it.
+         *
+         * This used to build Tailwind class strings by interpolation —
+         * `bg-${color}-100`, and a hash of the event name picked one of twelve
+         * hues for anything unrecognised. Two problems with that. Classes
+         * assembled at runtime cannot be in a compiled stylesheet, so they only
+         * ever worked because a CSS compiler was running in the browser. And a
+         * rainbow keyed on a string hash looks like information while carrying
+         * none: two unrelated events get different colours for no reason, and a
+         * reader learns to ignore colour entirely.
+         *
+         * So colour now means one of four things — something was created,
+         * changed, removed, or brought back — and everything else is neutral.
+         * The stylesheet holds the palette; this returns the key.
+         */
         window.ActivityTypeStyler = {
-            // Predefined semantic colors for common activity types
-            semanticColors: {
-                'created': 'green',
-                'updated': 'blue',
-                'deleted': 'red',
-                'restored': 'yellow',
-                'login': 'purple',
-                'logout': 'indigo',
-                'system': 'pink',
-                'error': 'red',
-                'warning': 'amber',
-                'info': 'blue',
-                'success': 'green',
-                'failed': 'red',
-                'completed': 'green',
-                'started': 'blue',
-                'cancelled': 'gray',
-                'pending': 'yellow',
-                'approved': 'green',
-                'rejected': 'red',
-                'published': 'green',
-                'drafted': 'gray',
-                'archived': 'slate',
-            },
-
-            // Color palette for unknown activity types
-            colorPalette: [
-                'blue', 'green', 'purple', 'pink', 'indigo', 'cyan',
-                'teal', 'emerald', 'lime', 'amber', 'orange', 'rose'
+            // Ordered: the first match wins, so 'restored' is tested before the
+            // 'store' that would otherwise catch it.
+            semantics: [
+                ['created',  ['created', 'create', 'added', 'add', 'registered', 'published', 'approved', 'completed', 'success', 'login', 'started']],
+                ['updated',  ['updated', 'update', 'edited', 'edit', 'changed', 'change', 'modified', 'moved', 'renamed', 'info']],
+                ['deleted',  ['deleted', 'delete', 'removed', 'remove', 'destroyed', 'revoked', 'rejected', 'failed', 'error', 'cancelled', 'logout']],
+                ['restored', ['restored', 'restore', 'reverted', 'undeleted', 'reopened', 'pending', 'warning', 'archived', 'drafted']],
             ],
 
-            // Icon mapping for activity types
             iconMapping: {
-                'created': 'M12 6v6m0 0v6m0-6h6m-6 0H6',
-                'updated': 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
-                'deleted': 'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16',
-                'restored': 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
-                'login': 'M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1',
-                'logout': 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1',
-                'system': 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z',
+                'created': 'M12 5v14M5 12h14',
+                'updated': 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z',
+                'deleted': 'M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6M10 11v6M14 11v6',
+                'restored': 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+                'neutral': 'M12 8h.01M11 12h1v4h1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
             },
 
-            // Get color for activity type
-            getColor(eventType) {
-                if (!eventType) return 'gray';
-
-                const lowerEvent = eventType.toLowerCase();
-
-                // Check exact match first
-                if (this.semanticColors[lowerEvent]) {
-                    return this.semanticColors[lowerEvent];
+            /**
+             * One of 'created', 'updated', 'deleted', 'restored', or '' for
+             * anything the interface has no opinion about.
+             */
+            getEvent(eventType) {
+                if (!eventType) {
+                    return '';
                 }
 
-                // Check for partial matches (e.g., "user_login" contains "login")
-                for (const [keyword, color] of Object.entries(this.semanticColors)) {
-                    if (lowerEvent.includes(keyword)) {
-                        return color;
+                const value = String(eventType).toLowerCase();
+
+                for (const [key, keywords] of this.semantics) {
+                    if (keywords.some(keyword => value.includes(keyword))) {
+                        return key;
                     }
                 }
 
-                // Generate consistent color based on string hash
-                return this.colorPalette[this.hashCode(eventType) % this.colorPalette.length];
+                return '';
             },
 
-            // Generate hash code for consistent color assignment
-            hashCode(str) {
-                let hash = 0;
-                for (let i = 0; i < str.length; i++) {
-                    const char = str.charCodeAt(i);
-                    hash = ((hash << 5) - hash) + char;
-                    hash = hash & hash; // Convert to 32-bit integer
-                }
-                return Math.abs(hash);
-            },
-
-            // Get icon path for activity type
             getIcon(eventType) {
-                if (!eventType) return this.iconMapping.system;
-
-                const lowerEvent = eventType.toLowerCase();
-
-                // Check exact match
-                if (this.iconMapping[lowerEvent]) {
-                    return this.iconMapping[lowerEvent];
-                }
-
-                // Check for partial matches
-                for (const [keyword, icon] of Object.entries(this.iconMapping)) {
-                    if (lowerEvent.includes(keyword)) {
-                        return icon;
-                    }
-                }
-
-                // Default icon
-                return 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z';
+                return this.iconMapping[this.getEvent(eventType) || 'neutral'];
             },
 
-            // Generate badge classes
+            /**
+             * Kept for views published before the palette was reworked. They
+             * expect a colour name; give them one that still reads correctly
+             * rather than a hue chosen by hashing the event name.
+             *
+             * @deprecated Style from the data-event attribute instead.
+             */
+            getColor(eventType) {
+                return { created: 'green', updated: 'blue', deleted: 'red', restored: 'amber' }[this.getEvent(eventType)] || 'gray';
+            },
+
+            /** @deprecated Use data-event with the .al-badge class. */
             getBadgeClasses(eventType) {
-                const color = this.getColor(eventType);
-                return `bg-${color}-100 dark:bg-${color}-900/30 text-${color}-800 dark:text-${color}-300 border-${color}-200 dark:border-${color}-800`;
+                return 'al-badge';
             },
 
-            // Generate timeline gradient classes
+            /** @deprecated Use data-event with the .al-timeline__marker class. */
             getTimelineClasses(eventType) {
-                const color = this.getColor(eventType);
-                return `bg-gradient-to-br from-${color}-500 to-${color}-600 dark:from-${color}-400 dark:to-${color}-500`;
+                return 'al-timeline__marker';
             },
 
-            // Generate progress bar classes
+            /** @deprecated Use data-event with the .al-bar__fill class. */
             getProgressClasses(eventType) {
-                const color = this.getColor(eventType);
-                return `bg-${color}-500`;
+                return 'al-bar__fill';
             },
 
-            // Generate all styling for an event type
             getEventTypeStyling(eventType) {
+                const event = this.getEvent(eventType);
+
                 return {
+                    event: event,
                     color: this.getColor(eventType),
                     icon: this.getIcon(eventType),
-                    badgeClasses: this.getBadgeClasses(eventType),
-                    timelineClasses: this.getTimelineClasses(eventType),
-                    progressClasses: this.getProgressClasses(eventType),
+                    badgeClasses: 'al-badge',
+                    timelineClasses: 'al-timeline__marker',
+                    progressClasses: 'al-bar__fill',
                 };
             }
         };
 
         window.ActivitylogUi = {
+            /**
+             * Dates are formatted in one place so the table, the timeline and
+             * the detail panel agree, and so an unparseable value shows as a
+             * dash rather than "Invalid Date".
+             */
+            _date(value) {
+                if (!value) {
+                    return null;
+                }
+
+                const date = new Date(value);
+
+                return Number.isNaN(date.getTime()) ? null : date;
+            },
+
+            formatDate(value) {
+                const date = this._date(value);
+
+                if (!date) {
+                    return '—';
+                }
+
+                const now = new Date();
+                const sameYear = date.getFullYear() === now.getFullYear();
+
+                return date.toLocaleDateString(undefined, {
+                    day: 'numeric',
+                    month: 'short',
+                    year: sameYear ? undefined : 'numeric',
+                });
+            },
+
+            formatTime(value) {
+                const date = this._date(value);
+
+                return date ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+            },
+
+            /**
+             * Renders a logged value for display. Objects and arrays are shown
+             * as compact JSON rather than "[object Object]", and null is shown
+             * as a word rather than as an empty gap.
+             */
+            stringify(value) {
+                if (value === null) return 'null';
+                if (value === undefined) return '—';
+                if (typeof value === 'object') return JSON.stringify(value);
+                if (value === '') return '(empty)';
+
+                return String(value);
+            },
+
+            sameDay(a, b) {
+                const x = this._date(a), y = this._date(b);
+
+                return !!x && !!y && x.toDateString() === y.toDateString();
+            },
+
+            /** "Today", "Yesterday", else the full date. */
+            formatDayHeading(value) {
+                const date = this._date(value);
+
+                if (!date) {
+                    return 'Unknown date';
+                }
+
+                const today = new Date();
+                const yesterday = new Date(today);
+                yesterday.setDate(yesterday.getDate() - 1);
+
+                if (date.toDateString() === today.toDateString()) return 'Today';
+                if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+
+                return date.toLocaleDateString(undefined, {
+                    weekday: 'short', day: 'numeric', month: 'long',
+                    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+                });
+            },
+
+            /**
+             * A recorded event name, made readable.
+             *
+             * Applications log snake_case — "subscription_renewed",
+             * "permission_changed" — and printing that raw put underscores in
+             * badges, chart legends and bar labels.
+             */
+            humanEvent(event) {
+                const value = String(event ?? '').trim();
+
+                if (value === '') {
+                    return 'unknown';
+                }
+
+                return value.replace(/[_-]+/g, ' ');
+            },
+
+            /** The record an activity was recorded against. */
+            recordLabel(activity) {
+                if (activity.subject_type) {
+                    return `${activity.subject_type.split('\\').pop()} #${activity.subject_id}`;
+                }
+
+                return (activity.description || '').trim() || activity.event || '—';
+            },
+
+            /**
+             * The description, but only when it adds something.
+             *
+             * Spatie's default description is the event name, so on a stock
+             * install it repeats the badge beside it word for word. Returning
+             * empty here keeps those rows one line tall.
+             */
+            extraDescription(activity) {
+                const description = (activity.description || '').trim();
+                const event = (activity.event || '').trim();
+
+                if (!description || description.toLowerCase() === event.toLowerCase()) {
+                    return '';
+                }
+
+                return description === this.recordLabel(activity) ? '' : description;
+            },
+
+            formatDateTime(value) {
+                const date = this._date(value);
+
+                return date ? date.toLocaleString() : '—';
+            },
+
+            /**
+             * "3 minutes ago" and friends, for the timeline where the exact
+             * timestamp is a title attribute away.
+             */
+            formatRelative(value) {
+                const date = this._date(value);
+
+                if (!date) {
+                    return '—';
+                }
+
+                const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+                const units = [
+                    ['year', 31536000], ['month', 2592000], ['week', 604800],
+                    ['day', 86400], ['hour', 3600], ['minute', 60],
+                ];
+
+                // Beyond a week "last year" and "2 years ago" stop being useful
+                // and start hiding the answer: on an audit trail the reader wants
+                // the date. Relative time earns its place only while it is more
+                // legible than the timestamp.
+                if (Math.abs(seconds) > 7 * 86400) {
+                    return this.formatDate(value);
+                }
+
+                for (const [unit, size] of units) {
+                    if (Math.abs(seconds) >= size) {
+                        return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+                            .format(Math.round(seconds / size), unit);
+                    }
+                }
+
+                return 'just now';
+            },
+
+            /**
+             * Counted rather than a boolean: the export dialog can open the
+             * save-view dialog behind it, and the first one to close must not
+             * unlock the page while another is still up.
+             */
+            /**
+             * Whether a filter entry actually narrows anything.
+             *
+             * The dialogs treated any present key as an applied filter, so a
+             * default date_preset of 'all' — which the panel always sets —
+             * counted, and the "this exports the entire log" warning could
+             * never appear.
+             */
+            isRealFilter(key, value) {
+                if (value === null || value === undefined || value === '') return false;
+                if (Array.isArray(value) && value.length === 0) return false;
+                if (key === 'date_preset' && value === 'all') return false;
+
+                return true;
+            },
+
+            hasRealFilters(filters) {
+                return Object.entries(filters || {}).some(([key, value]) => this.isRealFilter(key, value));
+            },
+
+            _scrollLocks: 0,
+            _focusReturn: [],
+
+            /**
+             * Moves focus into a dialog, keeps Tab inside it, and puts focus
+             * back where it came from on close. Without this a keyboard user
+             * opens the detail panel and carries on tabbing the table behind
+             * it, with no way to reach the dialog's own controls.
+             */
+            trapFocus(panel, open) {
+                if (!panel) {
+                    return;
+                }
+
+                if (open) {
+                    this._focusReturn.push(document.activeElement);
+
+                    requestAnimationFrame(() => {
+                        const first = panel.querySelector('[autofocus]') || this.tabbable(panel)[0] || panel;
+                        first.focus?.();
+                    });
+
+                    return;
+                }
+
+                const previous = this._focusReturn.pop();
+
+                if (previous && document.contains(previous)) {
+                    previous.focus?.();
+                }
+            },
+
+            tabbable(root) {
+                return Array.from(root.querySelectorAll(
+                    'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+                )).filter(el => el.offsetParent !== null || el === document.activeElement);
+            },
+
+            /** Wrap Tab at the ends of a dialog. */
+            keepTabInside(event, panel) {
+                if (event.key !== 'Tab' || !panel) {
+                    return;
+                }
+
+                const items = this.tabbable(panel);
+
+                if (items.length === 0) {
+                    return;
+                }
+
+                const first = items[0];
+                const last = items[items.length - 1];
+
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            },
+
+            lockScroll(locked) {
+                this._scrollLocks = Math.max(0, this._scrollLocks + (locked ? 1 : -1));
+                document.documentElement.classList.toggle('al-scroll-locked', this._scrollLocks > 0);
+            },
+
             async parseJsonResponse(response, context) {
                 const body = await response.text();
                 const contentType = response.headers.get('content-type') || '';
                 const preview = body.trim().slice(0, 240);
+
+                // An expired session answers every request with 401 JSON rather
+                // than a redirect, which otherwise surfaced as a generic "failed
+                // to load" and left the user staring at an empty dashboard.
+                if (response.status === 401 || response.status === 419) {
+                    window.ActivitylogUi.handleUnauthenticated();
+                    throw new Error(`${context} failed: your session has expired.`);
+                }
+
+                // A refused parameter carries an explanation worth repeating.
+                // Reporting it as a generic failure left the user with a filter
+                // the server would not accept and nothing saying which one.
+                if (response.status === 422) {
+                    let detail = '';
+
+                    try {
+                        const parsed = JSON.parse(body);
+                        detail = Object.values(parsed.errors || {}).flat().join(' ') || parsed.message || '';
+                    } catch (error) {
+                        detail = preview;
+                    }
+
+                    const rejection = new Error(detail || `${context} was refused.`);
+                    rejection.isInvalidInput = true;
+                    throw rejection;
+                }
 
                 if (!response.ok) {
                     throw new Error(`${context} failed with HTTP ${response.status}${preview ? `: ${preview}` : ''}`);
@@ -709,6 +903,26 @@
                 } catch (error) {
                     throw new Error(`${context} returned invalid JSON${preview ? `: ${preview}` : ''}`);
                 }
+            },
+
+            // Guarded so that a page full of parallel requests all failing at once
+            // does not fire a reload per request.
+            _reauthenticating: false,
+
+            handleUnauthenticated() {
+                if (this._reauthenticating) {
+                    return;
+                }
+
+                this._reauthenticating = true;
+
+                if (window.notify) {
+                    window.notify.error('Session expired', 'Reloading so you can sign in again…');
+                }
+
+                // Reloading lets Laravel's auth middleware do the redirect, rather
+                // than this package guessing at the application's login route.
+                setTimeout(() => window.location.reload(), 1200);
             }
         };
 
@@ -741,16 +955,194 @@
                         window.notify.success('Export Complete', `Activities exported as ${format.toUpperCase()} file`);
                     }
                 } else if (result.job_id) {
-                    // Background job - poll for completion
                     if (window.notify) {
-                        window.notify.info('Processing', 'Large export is being processed. You will be notified when ready.');
+                        window.notify.info('Processing', 'This export is large enough to run in the background. Keep this page open and the download will appear here.');
                     }
+
+                    window.pollExportProgress(result.job_id, format);
                 }
             } catch (error) {
                 console.error('Export error:', error);
                 if (window.notify) {
                     window.notify.error('Export Failed', 'Failed to export activities. Please try again.');
                 }
+            }
+        };
+
+        // Job ids currently being polled, so a second click on the same export
+        // does not start a second poll loop against it.
+        window.exportProgressPolls = new Set();
+
+        // Pending jobs are also written to storage and picked up again on load.
+        // A job id lives only on the page that started it, and the server has no
+        // way to list a user's jobs — so a refresh, a navigation, or this
+        // package's own session-expiry reload used to strand the export: still
+        // running, still cached, and no longer reachable by anything. The
+        // messages telling the user to reload and check later depend on this.
+        window.ActivitylogUiExports = {
+            key: 'activitylog_pending_exports',
+
+            all() {
+                try {
+                    const stored = JSON.parse(localStorage.getItem(this.key) || '[]');
+                    if (!Array.isArray(stored)) return [];
+
+                    // Anything older than the poll deadline is not worth resuming.
+                    const cutoff = Date.now() - (20 * 60 * 1000);
+                    return stored.filter(job => job && job.jobId && (job.startedAt || 0) > cutoff);
+                } catch (error) {
+                    return [];
+                }
+            },
+
+            add(jobId, format) {
+                try {
+                    const jobs = this.all().filter(job => job.jobId !== jobId);
+                    jobs.push({ jobId, format, startedAt: Date.now() });
+                    localStorage.setItem(this.key, JSON.stringify(jobs));
+                } catch (error) {
+                    // Storage can be unavailable or full. Losing the ability to
+                    // resume is not a reason to fail the export in progress.
+                    console.error('Could not record the pending export:', error);
+                }
+            },
+
+            remove(jobId) {
+                try {
+                    localStorage.setItem(this.key, JSON.stringify(this.all().filter(job => job.jobId !== jobId)));
+                } catch (error) {
+                    console.error('Could not clear the pending export:', error);
+                }
+            },
+
+            resume() {
+                this.all().forEach(job => window.pollExportProgress(job.jobId, job.format));
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => window.ActivitylogUiExports.resume());
+
+        /**
+         * Follow a queued export to completion.
+         *
+         * The job has always written its progress to a cache the API exposes, but
+         * nothing ever read it: a queued export told the user it was "processing"
+         * and then went quiet forever, leaving the finished file reachable only by
+         * an email that is off by default — and unmentioned when it fails to send.
+         */
+        window.pollExportProgress = async function (jobId, format) {
+            if (window.exportProgressPolls.has(jobId)) {
+                return;
+            }
+
+            window.exportProgressPolls.add(jobId);
+            window.ActivitylogUiExports.add(jobId, format);
+
+            const endpoint = '{{ route("activitylog-ui.api.export.progress") }}';
+            // Comfortably past the default job timeout (300s) times its retries,
+            // so a slow-but-healthy export is not abandoned early.
+            const deadline = Date.now() + (20 * 60 * 1000);
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+            let delay = 2000;
+            let consecutiveErrors = 0;
+            let consecutiveMissing = 0;
+
+            try {
+                while (Date.now() < deadline) {
+                    await sleep(delay);
+                    // Backs off so a long export is not polled every two seconds
+                    // for twenty minutes.
+                    delay = Math.min(Math.round(delay * 1.4), 15000);
+
+                    let status;
+
+                    try {
+                        const response = await fetch(`${endpoint}?job_id=${encodeURIComponent(jobId)}`, {
+                            headers: {
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                            }
+                        });
+
+                        const result = await window.ActivitylogUi.parseJsonResponse(response, 'Checking export progress');
+                        status = result.data || {};
+                        consecutiveErrors = 0;
+                    } catch (error) {
+                        console.error('Export progress check failed:', error);
+
+                        // A blip should not abandon an export that is still running;
+                        // a persistent failure means nothing useful is coming.
+                        if (++consecutiveErrors >= 3) {
+                            if (window.notify) {
+                                window.notify.warning('Export status unavailable', 'We stopped checking on this export. Reload the page to see whether it finished.');
+                            }
+                            return;
+                        }
+
+                        continue;
+                    }
+
+                    if (status.status === 'completed') {
+                        if (window.notify) {
+                            window.notify.success(
+                                'Export ready',
+                                `Your ${String(format).toUpperCase()} export has finished.`,
+                                {
+                                    link: status.download_url ? { href: status.download_url, label: 'Download' } : null,
+                                    timeout: 0
+                                }
+                            );
+
+                            // Recorded by the job when the completion email could not
+                            // be sent. Saying so matters: the user was told to expect
+                            // one, and the file itself is fine.
+                            if (status.notification === 'failed') {
+                                window.notify.warning('Email not sent', status.notification_error || 'The export is ready to download, but we could not email you about it.', { timeout: 0 });
+                            }
+                        }
+
+                        window.ActivitylogUiExports.remove(jobId);
+
+                        return;
+                    }
+
+                    if (status.status === 'failed') {
+                        if (window.notify) {
+                            window.notify.error('Export failed', status.message || 'The export could not be completed.', { timeout: 0 });
+                        }
+
+                        window.ActivitylogUiExports.remove(jobId);
+
+                        return;
+                    }
+
+                    // The status is written before the job is dispatched and kept for
+                    // 24 hours, so this means the cache dropped it — the export may
+                    // well still be running, but its progress is no longer knowable.
+                    if (status.status === 'not_found') {
+                        if (++consecutiveMissing >= 3) {
+                            if (window.notify) {
+                                window.notify.warning('Export status unavailable', 'We lost track of this export. If it completes you will still receive the email, if notifications are enabled.');
+                            }
+
+                            // Dropped rather than kept for a later reload: there is
+                            // no status left to poll, so resuming would only repeat
+                            // this. A network failure is different, and is kept.
+                            window.ActivitylogUiExports.remove(jobId);
+
+                            return;
+                        }
+                    } else {
+                        consecutiveMissing = 0;
+                    }
+                }
+
+                if (window.notify) {
+                    window.notify.warning('Still exporting', 'This export is taking longer than expected. Reload the page later to check on it.');
+                }
+            } finally {
+                window.exportProgressPolls.delete(jobId);
             }
         };
 
@@ -791,212 +1183,119 @@
 
     @stack('head')
 </head>
-<body class="h-full font-sans antialiased"
-      x-data
-      x-init="$store.darkMode.init()"
-      :class="{ 'dark': $store.darkMode.on }">
-    <div class="min-h-full bg-gray-50 dark:bg-gray-900">
-        <!-- Navigation Header -->
-        <nav class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex justify-between h-16">
-                    <div class="flex items-center">
-                        <!-- Logo -->
-                        <div class="flex-shrink-0 flex items-center">
-                            @if(config('activitylog-ui.ui.logo'))
-                                <img class="h-8 w-auto" src="{{ config('activitylog-ui.ui.logo') }}" alt="{{ config('activitylog-ui.ui.brand') }}">
-                            @else
-                                <!-- Inline SVG Logo that responds to dark mode -->
-                                <svg class="h-8 w-auto" width="120" height="40" viewBox="0 0 120 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <!-- Background gradient -->
-                                    <defs>
-                                        <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                            <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
-                                            <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
-                                        </linearGradient>
-                                    </defs>
+<body>
+<div class="al-shell">
+    <header class="al-header">
+        <div class="al-container al-header__inner">
+            <a href="{{ route('activitylog-ui.dashboard') }}" class="al-brand">
+                @if(config('activitylog-ui.ui.logo'))
+                    <img src="{{ config('activitylog-ui.ui.logo') }}" alt="" style="height:1.625rem;width:auto;flex:none">
+                @else
+                    <span class="al-brand__mark" aria-hidden="true">
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                            <path d="M2 8h2.5l1.5 4 3-9 1.75 5H14"/>
+                        </svg>
+                    </span>
+                @endif
+                <span class="al-brand__text">{{ config('activitylog-ui.ui.brand', 'ActivityLog UI') }}</span>
+            </a>
 
-                                    <!-- Icon container -->
-                                    <rect x="2" y="4" width="32" height="32" rx="8" fill="url(#logoGradient)"/>
+            <div class="al-header__spacer"></div>
 
-                                    <!-- Activity log icon -->
-                                    <g transform="translate(8, 10)">
-                                        <!-- Document base -->
-                                        <path d="M4 2a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V6.414A2 2 0 0017.414 5L15 2.586A2 2 0 0013.586 2H4z"
-                                              fill="white" fill-opacity="0.9"/>
+            <button type="button"
+                    class="al-btn al-btn--ghost al-btn--icon"
+                    x-data
+                    @click="$store.darkMode.toggle()"
+                    :aria-pressed="$store.darkMode.on ? 'true' : 'false'"
+                    aria-label="Toggle dark mode">
+                <svg x-show="!$store.darkMode.on" x-cloak width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+                <svg x-show="$store.darkMode.on" x-cloak width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="4"/>
+                    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+                </svg>
+            </button>
 
-                                        <!-- Activity lines -->
-                                        <circle cx="6" cy="8" r="1.5" fill="white"/>
-                                        <line x1="9" y1="8" x2="14" y2="8" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+            @auth
+                <div class="al-user" x-data="{ open: false }" style="position:relative">
+                    <button type="button"
+                            class="al-btn al-btn--ghost"
+                            @click="open = !open"
+                            @click.away="open = false"
+                            @keydown.escape.window="open = false"
+                            :aria-expanded="open ? 'true' : 'false'"
+                            aria-label="Account menu">
+                        <span class="al-user__name al-hide-sm">{{ auth()->user()->name ?? auth()->user()->email }}</span>
+                        <span class="al-avatar" aria-hidden="true">{{ strtoupper(substr(auth()->user()->name ?? auth()->user()->email ?? '?', 0, 1)) }}</span>
+                    </button>
 
-                                        <circle cx="6" cy="12" r="1.5" fill="white"/>
-                                        <line x1="9" y1="12" x2="13" y2="12" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-
-                                        <circle cx="6" cy="16" r="1.5" fill="white"/>
-                                        <line x1="9" y1="16" x2="12" y2="16" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-                                    </g>
-
-                                    <!-- Text that adapts to dark mode -->
-                                    <text x="42" y="16" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600"
-                                          class="fill-gray-800 dark:fill-gray-100">
-                                        ActivityLog
-                                    </text>
-                                    <text x="42" y="28" font-family="Inter, system-ui, sans-serif" font-size="8" font-weight="500"
-                                          class="fill-gray-500 dark:fill-gray-300">
-                                        UI
-                                    </text>
-                                </svg>
-                            @endif
+                    <div x-show="open"
+                         x-cloak
+                         x-transition.opacity.duration.120ms
+                         class="al-card"
+                         style="position:absolute;right:0;top:calc(100% + .375rem);width:15rem;box-shadow:var(--shadow);z-index:40">
+                        <div style="padding:.625rem .75rem;border-bottom:1px solid var(--border)">
+                            <p class="al-truncate" style="font-weight:600">{{ auth()->user()->name ?? 'Signed in' }}</p>
+                            <p class="al-truncate al-small al-muted">{{ auth()->user()->email }}</p>
                         </div>
-
-                        <!-- Navigation Links -->
-                        <div class="hidden sm:ml-8 sm:flex sm:space-x-8">
-                            <a href="{{ route('activitylog-ui.dashboard') }}"
-                               class="inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors
-                                      {{ request()->routeIs('activitylog-ui.dashboard')
-                                         ? 'border-blue-500 text-gray-900 dark:text-white'
-                                         : 'border-transparent text-gray-500 dark:text-gray-400 hover:border-gray-300 hover:text-gray-700 dark:hover:text-gray-300' }}">
-                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2z"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5h2a2 2 0 012 2v6a2 2 0 01-2 2h-2a2 2 0 01-2-2V7a2 2 0 012-2z"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17h6"></path>
-                                </svg>
-                                Activity Log
-                            </a>
-                        </div>
-                    </div>
-
-                    <!-- Right side -->
-                    <div class="flex items-center space-x-4">
-                        <!-- Theme toggle -->
-                        <button @click="$store.darkMode.toggle()"
-                                class="p-2 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <svg x-show="!$store.darkMode.on" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
-                            </svg>
-                            <svg x-show="$store.darkMode.on" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
-                            </svg>
-                        </button>
-
-                        <!-- User menu -->
-                        @auth
-                            <div class="relative" x-data="{ open: false }">
-                                <button @click="open = !open"
-                                        @click.away="open = false"
-                                        class="flex items-center space-x-3 p-2 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors">
-                                    <span class="text-sm">
-                                        {{ auth()->user()->name ?? auth()->user()->email }}
-                                    </span>
-                                    <div class="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
-                                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                            {{ substr(auth()->user()->name ?? auth()->user()->email, 0, 1) }}
-                                        </span>
-                                    </div>
-                                    <svg class="w-4 h-4 transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        @if(Route::has('logout'))
+                            {{-- Guarded: not every application names its logout route 'logout',
+                                 and calling route() for one that does not exist threw a
+                                 RouteNotFoundException that took the whole page down. --}}
+                            <form method="POST" action="{{ route('logout') }}" style="padding:.375rem">
+                                @csrf
+                                <button type="submit" class="al-btn al-btn--ghost al-btn--block" style="justify-content:flex-start">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
                                     </svg>
+                                    Sign out
                                 </button>
-
-                                <!-- Dropdown menu -->
-                                <div x-show="open"
-                                     x-transition:enter="transition ease-out duration-100"
-                                     x-transition:enter-start="transform opacity-0 scale-95"
-                                     x-transition:enter-end="transform opacity-100 scale-100"
-                                     x-transition:leave="transition ease-in duration-75"
-                                     x-transition:leave-start="transform opacity-100 scale-100"
-                                     x-transition:leave-end="transform opacity-0 scale-95"
-                                     class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 dark:ring-white dark:ring-opacity-10 z-50">
-                                    <div class="py-1">
-                                        <!-- User info -->
-                                        <div class="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
-                                            <p class="text-sm font-medium text-gray-900 dark:text-white">
-                                                {{ auth()->user()->name ?? 'User' }}
-                                            </p>
-                                            <p class="text-sm text-gray-500 dark:text-gray-400">
-                                                {{ auth()->user()->email }}
-                                            </p>
-                                        </div>
-
-                                        <!-- Logout button -->
-                                        <form method="POST" action="{{ route('logout') }}" class="block">
-                                            @csrf
-                                            <button type="submit"
-                                                    class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:bg-gray-100 dark:focus:bg-gray-700 transition-colors">
-                                                <div class="flex items-center">
-                                                    <svg class="w-4 h-4 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
-                                                    </svg>
-                                                    Sign out
-                                                </div>
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-                        @endauth
+                            </form>
+                        @endif
                     </div>
                 </div>
-            </div>
-        </nav>
-
-        <!-- Main Content -->
-        <main class="flex-1 p-6">
-            @yield('content')
-        </main>
-
-        <!-- Notifications -->
-        <div x-data="notifications()"
-             x-init="init()"
-             class="fixed inset-0 flex items-end justify-center px-4 py-6 pointer-events-none sm:p-6 sm:items-start sm:justify-end z-50">
-            <div class="w-full flex flex-col items-center space-y-4 sm:items-end">
-                <template x-for="notification in notifications" :key="notification.id">
-                    <div x-show="notification.show"
-                         x-transition:enter="transform ease-out duration-300"
-                         x-transition:enter-start="translate-x-full opacity-0"
-                         x-transition:enter-end="translate-x-0 opacity-100"
-                         x-transition:leave="transform ease-in duration-200"
-                         x-transition:leave-start="translate-x-0 opacity-100"
-                         x-transition:leave-end="translate-x-full opacity-0"
-                         class="max-w-sm w-full bg-white dark:bg-gray-800 shadow-lg rounded-lg pointer-events-auto flex ring-1 ring-black ring-opacity-5 dark:ring-white dark:ring-opacity-10">
-                        <div class="flex-1 w-0 p-4">
-                            <div class="flex items-start">
-                                <div class="flex-shrink-0">
-                                    <svg x-show="notification.type === 'success'" class="h-6 w-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>
-                                    <svg x-show="notification.type === 'error'" class="h-6 w-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>
-                                    <svg x-show="notification.type === 'warning'" class="h-6 w-6 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
-                                    </svg>
-                                    <svg x-show="notification.type === 'info'" class="h-6 w-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>
-                                </div>
-                                <div class="ml-3 w-0 flex-1 pt-0.5">
-                                    <p class="text-sm font-medium text-gray-900 dark:text-white" x-text="notification.title"></p>
-                                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400" x-text="notification.message"></p>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="flex border-l border-gray-200 dark:border-gray-700">
-                            <button @click="remove(notification.id)"
-                                    class="w-full border border-transparent rounded-none rounded-r-lg p-4 flex items-center justify-center text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                </template>
-            </div>
+            @endauth
         </div>
-    </div>
+    </header>
 
-    <!-- Scripts -->
-    @stack('scripts')
+    <main class="al-main">
+        <div class="al-container">
+            @yield('content')
+        </div>
+    </main>
+</div>
+
+{{-- aria-atomic="false": role="status" is atomic by default, so adding a
+     third toast made a screen reader re-announce all three from the top. --}}
+<div x-data="notifications()" x-init="init()" class="al-toasts" role="status" aria-live="polite" aria-atomic="false">
+    <template x-for="notification in notifications" :key="notification.id">
+        <div x-show="notification.show"
+             x-transition.opacity.duration.150ms
+             class="al-toast"
+             :data-type="notification.type">
+            <div class="al-grow">
+                <p class="al-toast__title" x-text="notification.title"></p>
+                <p class="al-toast__body" x-text="notification.message"></p>
+                <a x-show="notification.link"
+                   :href="notification.link?.href"
+                   @click="remove(notification.id)"
+                   class="al-toast__link"
+                   x-text="notification.link?.label"></a>
+            </div>
+            <button type="button"
+                    class="al-btn al-btn--ghost al-btn--icon al-btn--sm"
+                    @click="remove(notification.id)"
+                    aria-label="Dismiss">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+    </template>
+</div>
+
+@stack('scripts')
 
     <script>
         // Global notification system
@@ -1005,41 +1304,78 @@
                 notifications: [],
 
                 init() {
-                    // Make notification system globally available
+                    // Make notification system globally available. The options
+                    // argument is optional throughout, so existing two- and
+                    // three-argument calls are unaffected.
                     window.notify = {
-                        success: (title, message) => this.add('success', title, message),
-                        error: (title, message) => this.add('error', title, message),
-                        warning: (title, message) => this.add('warning', title, message),
-                        info: (title, message) => this.add('info', title, message)
+                        success: (title, message, options) => this.add('success', title, message, options),
+                        error: (title, message, options) => this.add('error', title, message, options),
+                        warning: (title, message, options) => this.add('warning', title, message, options),
+                        info: (title, message, options) => this.add('info', title, message, options)
                     };
                 },
 
-                add(type, title, message) {
+                /**
+                 * @param options.link    {href, label} rendered as a link in the body
+                 * @param options.timeout ms before auto-dismissal; 0 keeps it until dismissed
+                 */
+                add(type, title, message, options = {}) {
                     const id = Date.now() + Math.random();
-                    const notification = {
+
+                    // Sticky ones do not expire, and a run of failing exports
+                    // raises two apiece. Past a handful they cover the page and
+                    // bury the newest, which is the one worth reading.
+                    //
+                    // Only those still shown are counted: removal hides one now
+                    // and splices it after the transition, so counting the array
+                    // alone meant several additions in a row all picked the same
+                    // already-dismissed entry and the cap never bit.
+                    const sticky = this.notifications.filter(n => n.sticky && n.show);
+
+                    if (sticky.length >= 5) {
+                        this.remove(sticky[0].id);
+                    }
+
+                    this.notifications.push({
                         id,
                         type,
                         title,
                         message,
+                        link: options.link || null,
+                        sticky: options.timeout === 0,
                         show: true
-                    };
+                    });
 
-                    this.notifications.push(notification);
+                    // A finished background export is the one thing here worth
+                    // interrupting for, and its notification carries the only link
+                    // to the file — so it stays until dismissed rather than
+                    // vanishing after five seconds while the user is elsewhere.
+                    const timeout = options.timeout === undefined ? 5000 : options.timeout;
 
-                    // Auto remove after 5 seconds
-                    setTimeout(() => {
-                        this.remove(id);
-                    }, 5000);
+                    if (timeout > 0) {
+                        setTimeout(() => this.remove(id), timeout);
+                    }
                 },
 
                 remove(id) {
-                    const index = this.notifications.findIndex(n => n.id === id);
-                    if (index > -1) {
-                        this.notifications[index].show = false;
-                        setTimeout(() => {
-                            this.notifications.splice(index, 1);
-                        }, 300);
+                    const notification = this.notifications.find(n => n.id === id);
+
+                    if (!notification) {
+                        return;
                     }
+
+                    notification.show = false;
+
+                    // Looked up again after the transition: the index captured now
+                    // is stale if anything else was dismissed in between, and
+                    // splicing it removed a notification the user was still reading.
+                    setTimeout(() => {
+                        const index = this.notifications.findIndex(n => n.id === id);
+
+                        if (index > -1) {
+                            this.notifications.splice(index, 1);
+                        }
+                    }, 300);
                 }
             }
         }
@@ -1047,16 +1383,28 @@
         // Dark mode persistence
         document.addEventListener('alpine:init', () => {
             Alpine.store('darkMode', {
-                on: false,
+                // Seeded from the class the head script already applied, so the
+                // store and the document never disagree on the first frame.
+                on: document.documentElement.classList.contains('dark'),
 
                 toggle() {
-                    this.on = !this.on;
-                    localStorage.setItem('darkMode', this.on);
+                    this.apply(!this.on);
+                },
+
+                apply(on) {
+                    this.on = on;
+                    document.documentElement.classList.toggle('dark', on);
+
+                    try {
+                        localStorage.setItem('darkMode', on ? 'true' : 'false');
+                    } catch (e) {
+                        // Storage can be unavailable; the toggle still works for
+                        // this page view.
+                    }
                 },
 
                 init() {
-                    this.on = localStorage.getItem('darkMode') === 'true' ||
-                             (!localStorage.getItem('darkMode') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                    this.on = document.documentElement.classList.contains('dark');
                 }
             });
         });

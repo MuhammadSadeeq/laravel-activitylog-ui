@@ -24,12 +24,12 @@ class ExportActivitiesJob implements ShouldQueue
     protected array $filters;
     protected string $format;
     protected array $options;
-    protected ?int $userId;
+    protected int|string|null $userId;
 
     /**
      * Create a new job instance.
      */
-    public function __construct(string $jobId, array $filters, string $format, array $options = [], ?int $userId = null)
+    public function __construct(string $jobId, array $filters, string $format, array $options = [], int|string|null $userId = null)
     {
         $this->jobId = $jobId;
         $this->filters = $filters;
@@ -70,8 +70,17 @@ class ExportActivitiesJob implements ShouldQueue
             // Update job status to processing
             $this->updateJobStatus('processing', 'Starting export...');
 
-            // Perform the actual export
-            $filePath = $exportService->export($this->filters, $this->format, $this->options);
+            // Perform the actual export. The owner travels with it so the
+            // download endpoint can tell whose extract this is.
+            $filePath = $exportService->export(
+                $this->filters,
+                $this->format,
+                // array_merge, not +. The union operator keeps the left-hand
+                // key, so a caller who put owner_id in the options they posted
+                // decided who the extract belonged to — and the synchronous path
+                // assigns it, so the two disagreed about who was in charge.
+                array_merge($this->options, ['owner_id' => $this->userId])
+            );
             $downloadUrl = $exportService->getDownloadUrl($filePath);
 
             // Update job status to completed
@@ -88,7 +97,7 @@ class ExportActivitiesJob implements ShouldQueue
                 'download_url' => $downloadUrl
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Queued export job failed', [
                 'job_id' => $this->jobId,
                 'error' => $e->getMessage(),
@@ -128,6 +137,7 @@ class ExportActivitiesJob implements ShouldQueue
             'message' => $message,
             'progress' => $status === 'completed' ? 100 : ($status === 'processing' ? 50 : 0),
             'download_url' => $downloadUrl,
+            'user_id' => $this->userId,
             'updated_at' => now()->toISOString(),
         ];
 
@@ -179,11 +189,24 @@ class ExportActivitiesJob implements ShouldQueue
                 'user_email' => $user->email
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // Deliberately best-effort: the export itself succeeded and the file
+            // is downloadable, so a mail failure must not fail the job and trigger
+            // a re-export. It is recorded in the status the UI polls, though —
+            // swallowing it entirely told the user their export was ready by an
+            // email that never arrived.
             Log::error('Failed to send export completion notification', [
                 'job_id' => $this->jobId,
                 'error' => $e->getMessage()
             ]);
+
+            $status = cache()->get("export_job_{$this->jobId}");
+
+            if (is_array($status)) {
+                $status['notification'] = 'failed';
+                $status['notification_error'] = 'The export is ready to download, but we could not email you about it.';
+                cache()->put("export_job_{$this->jobId}", $status, now()->addHours(24));
+            }
         }
     }
 }

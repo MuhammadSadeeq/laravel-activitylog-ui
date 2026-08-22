@@ -1,8 +1,19 @@
-# Upgrading from v1.x to v2.0
+# Upgrading to v3.0
+
+## Which path applies to you
+
+**Coming from v2.x** — the database and models are unchanged. Skip to
+[Step 2](#step-2-update-this-package), then read
+[Step 4](#step-4-update-custom-code) and [Step 5](#step-5-add-the-uis-indexes-recommended).
+Nothing else in this guide applies to you.
+
+**Coming from v1.x** — start at Step 1. You are crossing Spatie
+laravel-activitylog v4 to v5 as well, which moves data between columns, and then
+the v3.0 changes on top.
 
 ## Requirements
 
-| | v1.x | v2.0 |
+| | v1.x | v3.0 |
 |---|---|---|
 | PHP | ^8.1 | ^8.4 |
 | Laravel | 10 / 11 / 12 | 12 / 13 |
@@ -69,11 +80,61 @@ public function up(): void
 
 Once you have verified the migration is complete and your application works correctly, you can optionally clean up the legacy keys from `properties` in a separate migration.
 
+## Step 1b: Update your own models
+
+Spatie v5 moved the traits your models use. Every model still importing the old
+path will fatal with `Trait "Spatie\Activitylog\Traits\LogsActivity" not found`
+as soon as the upgrade lands, so do this in the same deploy.
+
+| v4 | v5 |
+|---|---|
+| `Spatie\Activitylog\Traits\LogsActivity` | `Spatie\Activitylog\Models\Concerns\LogsActivity` |
+| `Spatie\Activitylog\Traits\CausesActivity` | `Spatie\Activitylog\Models\Concerns\CausesActivity` |
+| `Spatie\Activitylog\Traits\HasActivity` | `Spatie\Activitylog\Models\Concerns\HasActivity` (v5 reintroduces this trait; it did not exist in v4) |
+| `Spatie\Activitylog\LogOptions` | `Spatie\Activitylog\Support\LogOptions` |
+
+The `LogOptions` move matters as much as the traits: any model with a
+`getActivitylogOptions()` method imports it, and the old class is gone, so the
+first logged event fails.
+
+```bash
+# Rewrite the imports across your app. Uses perl rather than sed because the
+# in-place flag differs between GNU and BSD, and find -exec rather than a
+# grep/xargs pipeline so filenames containing spaces are handled.
+find app -name '*.php' -exec perl -pi -e '
+    s{Spatie\\Activitylog\\Traits\\}{Spatie\\Activitylog\\Models\\Concerns\\}g;
+    s{Spatie\\Activitylog\\LogOptions}{Spatie\\Activitylog\\Support\\LogOptions}g;
+' {} +
+
+# Check nothing was missed
+grep -rn 'Activitylog\\Traits\|Activitylog\\LogOptions' app/ || echo "all imports updated"
+```
+
+Some relations were renamed too: `$model->activities` becomes
+`$model->activitiesAsSubject` and `$model->actions` becomes
+`$model->activitiesAsCauser`. (The `HasActivity` trait keeps `activities()` as an
+alias, so models using that trait are unaffected.) `getActivitylogOptions()` is
+optional in v5. See Spatie's own upgrade guide for the complete rename table.
+
 ## Step 2: Update this package
 
 ```bash
-composer require muhammadsadeeq/laravel-activitylog-ui:"^2.0"
+composer require muhammadsadeeq/laravel-activitylog-ui:"^3.0"
 ```
+
+### Authorization now defaults to on
+
+If you never published `config/activitylog-ui.php`, the UI previously required no
+authentication at all. It now requires a logged-in user who passes the
+`viewActivityLogUi` gate, which by default allows any authenticated user.
+
+* Published configs keep whatever value they already contain and are unaffected.
+* To keep the old behaviour, set `ACTIVITYLOG_UI_AUTHORIZATION=false`.
+* With authorization on, a guest hitting the UI in a browser is redirected by
+  Laravel's `auth` middleware, so your app needs a named `login` route (or a
+  `redirectGuestsTo()` callback). JSON requests get a `401` instead.
+* `access.allowed_users` / `access.allowed_roles` are now enforced even when
+  authorization is disabled. They previously had no effect in that combination.
 
 ## Step 3: Republish views (if published)
 
@@ -114,3 +175,114 @@ The batch UUID filter and display have been removed. If you used batch grouping,
 ```php
 activity()->withProperty('group', $groupId)->log('...');
 ```
+
+### Out-of-range and unusable parameters are now refused
+
+The API used to quietly answer a different question than the one it was asked.
+`per_page=999999` became 100, `per_page=-5` became 1, a `causer_id` it could not
+use became no causer filter at all, and the 101st `event_types` entry was
+dropped. Every one of those returned 200 with no indication that anything had
+changed.
+
+For a page whose purpose is to report what happened, the filter cases are the
+serious ones: dropping a filter shows **more** of the audit log than was asked
+for, and looks like a complete answer.
+
+These now return **422** with a message naming the parameter:
+
+```json
+{
+  "message": "The per_page parameter must be between 1 and 100. You asked for 999999.",
+  "errors": { "per_page": ["The per_page parameter must be between 1 and 100. You asked for 999999."] }
+}
+```
+
+Affected: `page`, `per_page`, `anchor_id`, `causer_id`, `subject_id`,
+`event_types`, and the single-value filters (`search`, `date_preset`,
+`start_date`, `end_date`, `causer_type`, `subject_type`, `property_key`). The
+export endpoint applies the same rules to the filters in its JSON body.
+
+Omitting a parameter, or sending it empty, still uses the default — only a value
+that cannot be honoured is refused. The package's own configured defaults are
+still clamped rather than refused, since a `default_per_page` above the cap is
+the installation's mistake, not the caller's.
+
+**What to check before upgrading:**
+
+- Bookmarks, scripts or saved views carrying a `per_page` above your largest
+  `ui.per_page_options` value. They will now fail instead of silently returning
+  fewer rows.
+- Any integration passing identifiers that are not integers, UUIDs, ULIDs, or
+  `[A-Za-z0-9_-]{1,64}`.
+- Requests filtering on more than 100 event types at once.
+
+The dashboard itself surfaces the message in a notification that stays until
+dismissed, so a stale filter in a user's browser storage says what is wrong
+rather than failing silently.
+
+### The pagination anchor is now a pair
+
+The activity list endpoint pins later pages to the rows that existed when page
+one was read, so activities recorded while someone reads do not push the list
+down and make page two repeat page one.
+
+That anchor used to be `anchor_id` alone. It is now `anchor_id` **and**
+`anchor_time` together, because the listing is ordered by `created_at` with the
+key only as a tiebreak, and a predicate has to match that ordering to mean
+"everything that existed then". Filtering on the key alone hid rows whenever the
+two disagreed — which is any log containing backdated or imported activities.
+
+* The shipped UI handles this itself; nothing to do if you use it.
+* If you call `/api/activities` directly, send both values back, taken from
+  `anchor_id` and `anchor_time` in the previous response. Sending one without
+  the other returns **422**.
+* `anchor_time` carries microseconds (`Y-m-d H:i:s.u`). Send back what you were
+  given rather than reformatting it: on a log stored with sub-second precision, a
+  timestamp truncated to the second is not the anchor row's time, and the
+  predicate then excludes every row in that second. Second-precision values are
+  still accepted, for anchors minted before this release.
+* `anchor_id` must now be an integer when the log's key is an integer. It was
+  previously accepted as any identifier-shaped string, which MySQL coerced to 0
+  and answered with an empty page.
+* `ActivitylogService::getActivities()` takes `?array $anchor` as its third
+  argument instead of `int|string|null $anchorId`.
+* `Activity::hasMonotonicKey()` is gone. It disabled anchoring entirely for UUID
+  and ULID keys. Comparing the pair is a large improvement for those — the key is
+  now only the tiebreak within one timestamp rather than the whole ordering — so
+  anchoring is worth doing rather than switching off. It is not a complete fix:
+  a row inserted at the anchor's exact timestamp with a lower random key can
+  still join the frozen set. An auto-incrementing key has no such window.
+
+### Removed: `searchWithSuggestions()`
+
+`ActivitylogService::searchWithSuggestions()` and the `search()` controller
+action have been removed. The action had no route, so nothing could reach it
+over HTTP, but it duplicated `getSearchSuggestions()` while publishing causer
+email addresses regardless of `filters.expose_causer_email`.
+
+Call `getSearchSuggestions(string $query): Collection` instead. It returns the
+same `value` / `label` / `type` rows the `/api/search/suggestions` endpoint
+serves.
+
+## Step 5: Add the UI's indexes (recommended)
+
+Spatie indexes the activity log for lookups by subject and causer. This UI asks
+different questions — it lists everything newest first, and groups by event over
+a date range — and neither was indexed. On a log of 200,000 rows MySQL answered
+a single page by reading every row and sorting the lot.
+
+```bash
+php artisan vendor:publish --tag="activitylog-ui-migrations"
+php artisan migrate
+```
+
+Measured on 204,963 activities: the first page goes from 350ms to 21ms, and the
+analytics queries read an index instead of the table.
+
+This is a separate, opt-in step for two reasons. `activity_log` belongs to
+Spatie, not to this package. And building an index on an established log locks
+it while it runs — about a second at that size, longer on a bigger one — which
+is a decision for whoever runs the database, not for a `composer update`.
+
+The migration reads the table, connection and key name from your configured
+activity model, and skips any index that already exists, so it is safe to re-run.

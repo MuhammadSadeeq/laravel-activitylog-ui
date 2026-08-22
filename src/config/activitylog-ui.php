@@ -35,12 +35,17 @@ return [
     | Authorization Configuration
     |--------------------------------------------------------------------------
     |
-    | When enabled=false: No authentication required (public access)
-    | When enabled=true: Requires authentication + gate/policy checks
+    | When enabled=true:  requires authentication, then the gate below.
+    | When enabled=false: the entire UI is public. Anyone who can reach the URL
+    |                     can read who did what, when, and to which record.
+    |
+    | The default gate allows any authenticated user, and narrows to the
+    | access.allowed_users / access.allowed_roles lists once you set them.
+    | Turn this off only for local development.
     |
     */
     'authorization' => [
-        'enabled' => false,
+        'enabled' => env('ACTIVITYLOG_UI_AUTHORIZATION', true),
         'gate' => 'viewActivityLogUi',
         'policy' => null,
         'guard' => null,
@@ -78,6 +83,11 @@ return [
     |--------------------------------------------------------------------------
     */
     'ui' => [
+        // Attributes tried, in order, when showing who caused an activity.
+        // Applications that do not key their users on `name` would otherwise see
+        // every causer rendered as "Unknown".
+        'causer_name_attributes' => ['name', 'email'],
+
         'title' => 'Activity Log',
         'brand' => 'ActivityLog UI',
         'logo' => null,
@@ -177,6 +187,12 @@ return [
     */
     'analytics' => [
         'cache_duration' => 3600, // seconds
+
+        // Distinct event series the trend chart draws before the rest are summed
+        // into a single "Other" line. An application can log any number of event
+        // names, and past about six the palette repeats — two lines share a
+        // colour and the legend stops identifying anything.
+        'max_chart_series' => 6,
         'chart_colors' => [
             'created' => '#10b981',
             'updated' => '#3b82f6',
@@ -203,6 +219,14 @@ return [
             'custom' => 'Custom range',
         ],
         'max_saved_views' => 10,
+
+        // Include causer email addresses in the causer filter dropdown, which
+        // makes the "Search users" box match on email as well as name.
+        //
+        // Off by default: the filter options endpoint returns every distinct
+        // causer, and it is unauthenticated unless 'authorization.enabled' is
+        // turned on, so enabling this would publish a complete email directory.
+        'expose_causer_email' => false,
     ],
 
     /*
@@ -212,6 +236,25 @@ return [
     */
     'performance' => [
         'cache_prefix' => 'activitylog_ui',
+
+        // Seconds to cache the filter dropdown options (causers, subject types,
+        // event types). New causers will not appear until this expires; call
+        // ActivitylogService::flushFilterOptions() after a bulk import to refresh
+        // them immediately.
+        'cache_ttl' => 3600,
+
+        // When those options expire, one request rebuilds them and the others
+        // wait this long for its result rather than all running the same scan.
+        // A waiter that times out rebuilds them itself, so raising this trades
+        // slower worst-case requests for less duplicated work.
+        'filter_lock_wait' => 3,
+
+        // How long that rebuild may hold the lock. Wants to exceed the slowest
+        // expected scan: too low and a long rebuild loses the lock partway
+        // through, letting a second request start the same work; too high and a
+        // worker killed mid-scan blocks rebuilds until it expires.
+        'filter_lock_ttl' => 30,
+
         'eager_load_relations' => ['causer', 'subject'],
     ],
 ];

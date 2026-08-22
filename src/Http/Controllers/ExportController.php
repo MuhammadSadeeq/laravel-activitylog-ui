@@ -5,7 +5,7 @@ namespace MuhammadSadeeq\ActivitylogUi\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Routing\Controller;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Storage;
@@ -35,8 +35,19 @@ class ExportController extends Controller
         ]);
 
         $format = $request->input('format');
-        $filters = $request->input('filters', []);
         $options = $request->input('options', []);
+
+        // owner_id is recorded by the server to decide who may download the
+        // finished file. It is not an option, and a caller offering one is
+        // answering a question they were not asked.
+        unset($options['owner_id']);
+
+        // Filters arrive nested in a JSON body, so they never pass through the
+        // dashboard's own extraction. Normalise them the same way: `filters` is
+        // only validated as an array, and a nested array inside it reaches a
+        // string-typed scope and throws before the try block below.
+        $filters = app(ActivityLogController::class)
+            ->normalizeFilters(is_array($request->input('filters')) ? $request->input('filters') : []);
 
         // Add filters to options for proper tracking
         $options['applied_filters'] = $filters;
@@ -87,6 +98,7 @@ class ExportController extends Controller
             }
 
             // Export immediately with filters
+            $options['owner_id'] = $request->user()?->id;
             $filePath = $this->exportService->export($filters, $format, $options);
             $downloadUrl = $this->exportService->getDownloadUrl($filePath);
 
@@ -99,7 +111,7 @@ class ExportController extends Controller
                 'filtered_count' => $filteredCount,
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Export failed', [
                 'error' => $e->getMessage(),
                 'filters' => $filters,
@@ -108,7 +120,8 @@ class ExportController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Export failed: ' . $e->getMessage(),
+                'message' => 'Export failed.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }
@@ -116,7 +129,7 @@ class ExportController extends Controller
     /**
      * Download exported file.
      */
-    public function download(Request $request): BinaryFileResponse
+    public function download(Request $request): StreamedResponse
     {
         $this->authorize('viewActivityLogUi');
 
@@ -124,26 +137,66 @@ class ExportController extends Controller
             'path' => 'required|string',
         ]);
 
-        $path = base64_decode($request->input('path'));
+        $path = base64_decode($request->input('path'), true);
 
-        // Security check: ensure path is within exports directory
-        $exportPath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        if (!str_starts_with($path, $exportPath)) {
+        if ($path === false) {
+            abort(400, 'Invalid file path.');
+        }
+
+        // Confine the path to the exports directory. A prefix check alone accepts
+        // "exports/activity-logs/../../../.env": Flysystem rejects traversal in
+        // practice, but relying on that leaves the guard here saying something it
+        // does not enforce.
+        //
+        // The directory comes from the service so the two agree: they each used to
+        // normalise the configured value differently, and a trailing slash was
+        // enough to make every download of a successfully written file 403.
+        $exportPath = $this->exportService->exportDirectory();
+        $normalized = ltrim(str_replace('\\', '/', $path), '/');
+
+        if (!str_starts_with($normalized, $exportPath . '/')) {
             abort(403, 'Invalid file path.');
         }
 
-        if (!Storage::exists($path)) {
+        // Segment-wise, so '..' is rejected as a path component rather than as a
+        // substring — a legitimately named file may contain dots.
+        $segments = explode('/', $normalized);
+
+        if (in_array('..', $segments, true) || in_array('.', $segments, true) || in_array('', $segments, true)) {
+            abort(403, 'Invalid file path.');
+        }
+
+        // Exports are only ever written in these formats. Anything else under the
+        // directory belongs to the host, and this endpoint is not a file browser.
+        if (!in_array(strtolower(pathinfo($normalized, PATHINFO_EXTENSION)), ['csv', 'xlsx', 'pdf', 'json'], true)) {
+            abort(403, 'Invalid file path.');
+        }
+
+        // Read from the configured disk, not whichever one happens to be default:
+        // the file was written to the configured one.
+        $disk = $this->exportService->disk();
+
+        // Passing the route's own access checks says the user may use this
+        // feature, not that this particular extract is theirs. An export is a
+        // filtered slice of the audit log, so serving one to whoever names its
+        // file hands over exactly the records someone else's filters selected.
+        //
+        // 404 rather than 403: the filenames carry a timestamp and a random
+        // suffix, and confirming which ones exist is itself worth withholding.
+        if (!$this->exportService->userMayDownload($normalized, $request->user()?->id)) {
             abort(404, 'File not found.');
         }
 
-        $filename = basename($path);
-        $mimeType = $this->getMimeType($path);
+        if (!$disk->exists($normalized)) {
+            abort(404, 'File not found.');
+        }
 
-        return response()->download(
-            Storage::path($path),
-            $filename,
-            ['Content-Type' => $mimeType]
-        );
+        $filename = basename($normalized);
+        $mimeType = $this->getMimeType($normalized);
+
+        // download() streams via readStream() and supplies the file size, rather
+        // than reading the whole export into memory to print it.
+        return $disk->download($normalized, $filename, ['Content-Type' => $mimeType]);
     }
 
     /**
@@ -158,7 +211,9 @@ class ExportController extends Controller
         ]);
 
         $jobId = $request->input('job_id');
-        $progress = $this->exportService->getExportProgress($jobId);
+        // The status carries the download URL, so it is as sensitive as the file
+        // and is scoped to whoever started the job.
+        $progress = $this->exportService->getExportProgress($jobId, $request->user()?->id);
 
         return response()->json([
             'success' => true,

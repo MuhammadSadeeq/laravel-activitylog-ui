@@ -1,111 +1,120 @@
 @extends('activitylog-ui::layouts.app')
 
 @section('title')
-{{ config('activitylog-ui.ui.title', 'Activity Log') }} Dashboard
+{{ config('activitylog-ui.ui.title', 'Activity Log') }}
 @endsection
 
 @section('content')
-<div x-data="activityDashboard()" x-init="init()" class="space-y-6">
-    <!-- Header -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-        <div>
-            <h2 class="text-2xl font-bold text-gray-900 dark:text-white">{{ config('activitylog-ui.ui.title', 'Activity Log') }}</h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Monitor and analyze all system activities</p>
+<div x-data="activityDashboard()" x-init="init()" class="al-stack al-stack--lg">
+    {{-- The page title lives in the toolbar rather than in a block of its own.
+         A standalone heading plus a sentence of explanation cost about 90px of
+         vertical space above a table whose whole job is to show rows. --}}
+    <div class="al-toolbar">
+        <div class="al-toolbar__grow al-row" style="gap:.625rem">
+            <h1 style="font-size:var(--step-3)">{{ config('activitylog-ui.ui.title', 'Activity Log') }}</h1>
+            <span class="al-chip tnum"
+                  x-show="hasLoaded && !loadError"
+                  x-cloak
+                  :aria-label="totalActivities.toLocaleString() + (totalActivities === 1 ? ' activity' : ' activities') + (hasActiveFilters ? ' matching the filters' : '')">
+                <span class="al-chip__text" x-text="totalActivities.toLocaleString()"></span>
+            </span>
+        </div>
 
-            <!-- Context indicator for pagination state -->
-            <div x-show="currentView === 'table' && currentPage > 1" class="mt-2">
-                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    Currently on page &nbsp;<span x-text="currentPage"></span>&nbsp;of&nbsp;<span x-text="totalPages"></span>
-                </span>
-            </div>
-            </div>
-
-        <!-- View Switcher & Export -->
-        <div class="mt-4 sm:mt-0 flex items-center space-x-4">
-            <!-- Export Button -->
-            @if(config('activitylog-ui.features.exports', true))
-            <button @click="exportActivities()"
-                    class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M7 7h10a2 2 0 012 2v8a2 2 0 01-2 2H7a2 2 0 01-2-2V9a2 2 0 012-2z"></path>
+        <div class="al-segmented" role="group" aria-label="View">
+            <button type="button"
+                    class="al-segmented__btn"
+                    :aria-pressed="currentView === 'table' ? 'true' : 'false'"
+                    @click="switchView('table')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M3 6h18M3 12h18M3 18h18"/>
                 </svg>
-                Export
+                Table
+            </button>
+            <button type="button"
+                    class="al-segmented__btn"
+                    :aria-pressed="currentView === 'timeline' ? 'true' : 'false'"
+                    @click="switchView('timeline')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><path d="M6 8v8M11 6h9M11 18h9"/>
+                </svg>
+                Timeline
+            </button>
+            @if(config('activitylog-ui.features.analytics', true))
+            <button type="button"
+                    class="al-segmented__btn"
+                    :aria-pressed="currentView === 'analytics' ? 'true' : 'false'"
+                    @click="switchView('analytics')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M4 20V10M10 20V4M16 20v-6M22 20H2"/>
+                </svg>
+                Analytics
             </button>
             @endif
-
-            <div class="flex rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1">
-                    <button @click="switchView('table')"
-                        :class="currentView === 'table' ? 'bg-blue-500 text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
-                        class="flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 6h18m-9 8h9"></path>
-                        </svg>
-                    Table
-                    </button>
-                    <button @click="switchView('timeline')"
-                        :class="currentView === 'timeline' ? 'bg-blue-500 text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
-                        class="flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ml-1">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                        </svg>
-                    Timeline
-                    </button>
-                    @if(config('activitylog-ui.features.analytics', true))
-                    <button @click="switchView('analytics')"
-                        :class="currentView === 'analytics' ? 'bg-blue-500 text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
-                        class="flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ml-1">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-                        </svg>
-                        Analytics
-                </button>
-                @endif
-            </div>
         </div>
+
+        @if(config('activitylog-ui.features.exports', true))
+        <button type="button" class="al-btn" @click="exportActivities()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3v12M8 11l4 4 4-4M4 21h16"/>
+            </svg>
+            Export
+        </button>
+        @endif
     </div>
 
-    <!-- Content -->
-    <div class="flex flex-col lg:flex-row gap-6">
-        <!-- Single Unified Filter Panel -->
-        <div x-show="currentView !== 'analytics'" class="w-full lg:w-72 xl:w-80 lg:flex-shrink-0">
+    {{-- Filtering, searching and paging all replace the table's contents with
+         no visible message, so a screen reader was given nothing at all. --}}
+    <p class="al-visually-hidden" role="status" aria-live="polite" x-text="statusMessage"></p>
+
+    <div class="al-layout" :class="currentView === 'analytics' ? '' : 'al-layout--with-sidebar'">
+        <div x-show="currentView !== 'analytics'" x-cloak>
             @include('activitylog-ui::components.filter-panel')
         </div>
 
-        <!-- Main Content -->
-        <div class="w-full lg:flex-1 lg:min-w-0" :class="{ 'lg:ml-0': currentView === 'analytics' }">
-            <!-- Loading State -->
-            <div x-show="loading" class="flex items-center justify-center py-12">
-                <div class="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
-                    <svg class="animate-spin h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                    </svg>
-                    <span>Loading activities...</span>
+        <div style="min-width:0">
+            {{-- Skeleton rows rather than a spinner: the page keeps its shape
+                 while loading, so the content does not jump when it arrives. --}}
+            <div x-show="(loading || !hasLoaded) && currentView !== 'analytics'" class="al-card">
+                <div class="al-card__body al-stack al-stack--md" aria-hidden="true">
+                    <template x-for="n in 6" :key="n">
+                        <div class="al-row" style="gap:.75rem">
+                            <div class="al-skeleton" style="height:1.25rem;width:4.5rem;flex:none"></div>
+                            <div class="al-skeleton al-grow" style="height:1.25rem"></div>
+                            <div class="al-skeleton al-hide-sm" style="height:1.25rem;width:5rem;flex:none"></div>
+                        </div>
+                    </template>
                 </div>
+                <span class="al-visually-hidden" role="status">Loading activities…</span>
             </div>
 
-            <!-- Table View -->
-            <div x-show="currentView === 'table' && !loading">
-                @include('activitylog-ui::components.table-view')
-            </div>
+            {{-- x-if, not x-show: with x-show both lists stay in the DOM and
+                 Alpine re-renders the hidden one on every state change, so most
+                 of the work behind a table update went into building a timeline
+                 nobody was looking at. x-if tears the inactive one down.
 
-            <!-- Timeline View -->
-            <div x-show="currentView === 'timeline' && !loading">
-                @include('activitylog-ui::components.timeline-view')
-            </div>
+                 Analytics stays on x-show below because it owns its own
+                 component state — destroying it would refetch on every switch
+                 back. --}}
+            <template x-if="currentView === 'table' && !loading && hasLoaded">
+                <div>
+                    @include('activitylog-ui::components.table-view')
+                </div>
+            </template>
 
-            <!-- Analytics View -->
+            <template x-if="currentView === 'timeline' && !loading && hasLoaded">
+                <div>
+                    @include('activitylog-ui::components.timeline-view')
+                </div>
+            </template>
+
             @if(config('activitylog-ui.features.analytics', true))
-            <div x-show="currentView === 'analytics' && !loading">
+            <div x-show="currentView === 'analytics'" x-cloak>
                 @include('activitylog-ui::components.analytics-dashboard')
             </div>
             @endif
         </div>
     </div>
 
-    <!-- Modals -->
     @include('activitylog-ui::components.activity-detail-modal')
     @if(config('activitylog-ui.features.exports', true))
     @include('activitylog-ui::components.export-modal')
@@ -124,11 +133,34 @@ function activityDashboard() {
         initialized: false,
         currentView: '{{ $view }}',
         loading: false,
+        // False until the first activities request settles. Without it the views
+        // render their "no activities found" state while the filter panel is still
+        // initialising, before any request has even been made.
+        hasLoaded: false,
+        // Set when the last load failed. Without it an empty `activities` reads as
+        // "nothing matched your filters", so a 500 looks like a successful search
+        // once the error toast has faded.
+        loadError: false,
+        // Page number of a reload that arrived while one was already running.
+        pendingReload: null,
+        // Kept separate from `loading` so appending to the timeline does not
+        // hide the list the user is currently scrolled into — x-show collapses
+        // the document height, and the browser then clamps scrollTop to 0.
+        loadingMore: false,
+        // Bumped by every full reload. An in-flight "load more" compares against
+        // it so a superseded page is discarded instead of appended.
+        requestToken: 0,
         activities: [],
         totalActivities: 0,
         currentPage: 1,
         perPage: {{ config('activitylog-ui.ui.default_per_page', 25) }},
         totalPages: 1,
+        // The newest row this listing is pinned to, as the (time, id) pair the
+        // server orders by. Both halves travel together: filtering on the id
+        // alone is not a prefix of that ordering, and hid a fifth of the log
+        // whenever a backdated activity made the two disagree.
+        anchorId: null,
+        anchorTime: null,
         showExportModal: false,
         @if(config('activitylog-ui.features.saved_views', true))
         showSaveViewModal: false,
@@ -145,11 +177,11 @@ function activityDashboard() {
             this.filterChangedHandler = (event) => {
                 this.currentFilters = event.detail || {};
                 this.currentPage = 1; // Reset to first page
-                this.loadActivities();
 
-                // Also reload analytics if on analytics view
-                if (this.currentView === 'analytics') {
-                    this.reloadAnalytics();
+                // Analytics listens for this event itself, and does not render
+                // the activity list, so there is nothing to fetch for it here.
+                if (this.currentView !== 'analytics') {
+                    this.loadActivities();
                 }
             };
 
@@ -185,28 +217,47 @@ function activityDashboard() {
             @endif
             window.addEventListener('filter-panel-ready', this.filterChangedHandler);
 
-            // Load initial data based on the default view
-            if (this.currentView === 'analytics') {
-                this.reloadAnalytics();
-            } else {
-                this.loadActivities();
-            }
+            // The initial load is driven by 'filter-panel-ready', which fires once
+            // the panel has restored the user's saved filters and carries them in
+            // its payload. Loading here as well would issue a second request whose
+            // result is immediately discarded, and show the user two toasts.
         },
 
         async loadActivities(page = 1) {
-            // Prevent multiple simultaneous calls
+            // A reload arriving while one is in flight used to be dropped outright,
+            // so changing a filter during a slow request left the rows showing the
+            // previous filter with nothing pending. Remember it and run it after.
             if (this.loading) {
+                this.pendingReload = page;
                 return;
             }
 
             this.loading = true;
+            this.loadError = false;
             this.currentPage = page;
+            // Supersede any "load more" still in flight, and release its lock so
+            // the button is usable as soon as this reload lands rather than
+            // whenever the abandoned request happens to settle.
+            this.requestToken++;
+            this.loadingMore = false;
+
+            // Page 1 is always a fresh look at the newest rows, so it re-anchors;
+            // every other page is a move within the listing page 1 established.
+            if (page === 1) {
+                this.anchorId = null;
+                this.anchorTime = null;
+            }
 
             try {
                 // Build query parameters
                 const params = new URLSearchParams();
                 params.append('page', page);
                 params.append('per_page', this.perPage);
+
+                if (this.anchorId != null && this.anchorTime != null) {
+                    params.append('anchor_id', this.anchorId);
+                    params.append('anchor_time', this.anchorTime);
+                }
 
                 // Add filters to params
                 Object.keys(this.currentFilters || {}).forEach(key => {
@@ -238,20 +289,36 @@ function activityDashboard() {
                 this.activities = result.data || [];
                 this.totalActivities = result.total || 0;
                 this.totalPages = result.last_page || 1;
+                this.anchorId = result.anchor_id ?? null;
+                this.anchorTime = result.anchor_time ?? null;
 
-                if (window.notify) {
-                    window.notify.success('Success', `Loaded ${this.activities.length} activities`);
-                }
-
+                // No success toast: the rows appearing is the confirmation.
             } catch (error) {
                 this.activities = [];
                 this.totalActivities = 0;
+                this.anchorId = null;
+                this.anchorTime = null;
+                this.loadError = true;
 
                 if (window.notify) {
-                    window.notify.error('Error', 'Failed to load activities');
+                    // A refused filter names itself, and the user can act on that
+                    // — usually by clearing filters. "Failed to load activities"
+                    // gives them nothing to go on.
+                    error?.isInvalidInput
+                        ? window.notify.error('Filter not accepted', error.message, { timeout: 0 })
+                        : window.notify.error('Error', 'Failed to load activities');
                 }
             } finally {
                 this.loading = false;
+                this.hasLoaded = true;
+
+                // Run the most recent superseded request, if any. Only the last
+                // one matters: earlier ones are already stale.
+                if (this.pendingReload !== null) {
+                    const next = this.pendingReload;
+                    this.pendingReload = null;
+                    this.loadActivities(next);
+                }
             }
         },
 
@@ -278,56 +345,78 @@ function activityDashboard() {
             }));
         },
 
+        /**
+         * Activities bucketed by calendar day, so the table can state a date
+         * once per group instead of repeating it on every row.
+         */
+        /** Announced to assistive technology after every load. */
+        get statusMessage() {
+            if (this.loading || !this.hasLoaded) return 'Loading activities';
+            if (this.loadError) return 'Activities could not be loaded';
+            if (this.activities.length === 0) return 'No activities match the current filters';
+
+            return `${this.totalActivities.toLocaleString()} ${this.totalActivities === 1 ? 'activity' : 'activities'}`
+                + `, showing page ${this.currentPage} of ${this.totalPages}`;
+        },
+
+        get groupedActivities() {
+            const groups = [];
+
+            for (const activity of this.activities) {
+                const date = new Date(activity.created_at);
+                const key = Number.isNaN(date.getTime()) ? 'unknown' : date.toDateString();
+
+                // The key must be unique per GROUP, not per day. Grouping is
+                // run-length, so one date can open several groups on a page —
+                // and a keyed x-for collapses duplicates to a single node,
+                // silently dropping every other group's rows. That is row loss
+                // with no error, in an audit log.
+                if (!groups.length || groups[groups.length - 1].date !== key) {
+                    groups.push({
+                        key: key + '#' + groups.length,
+                        date: key,
+                        label: window.ActivitylogUi.formatDayHeading(activity.created_at),
+                        items: [],
+                    });
+                }
+
+                groups[groups.length - 1].items.push(activity);
+            }
+
+            return groups;
+        },
+
         showActivityDetail(activity) {
             window.dispatchEvent(new CustomEvent('show-activity-detail', {
                 detail: activity
             }));
         },
 
-        getEventTypeColor(event) {
-            const colors = {
-                'created': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-                'updated': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-                'deleted': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-                'restored': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-            };
-            return colors[event] || 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
-        },
-
-        getEventIcon(event) {
-            const icons = {
-                'created': 'M12 6v6m0 0v6m0-6h6m-6 0H6',
-                'updated': 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
-                'deleted': 'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16',
-                'restored': 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'
-            };
-            return icons[event] || 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z';
-        },
-
-        getUserInitials(name) {
-            if (!name) return '?';
-            return name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2);
-        },
-
-        formatDate(dateString) {
-            return new Date(dateString).toLocaleString();
-        },
-
         // Load more activities for timeline view
         async loadMoreActivities() {
-            if (this.currentView !== 'timeline' || this.loading || this.currentPage >= this.totalPages) {
+            if (this.currentView !== 'timeline' || this.loading || this.loadingMore || this.currentPage >= this.totalPages) {
                 return;
             }
 
             const nextPage = this.currentPage + 1;
+            const token = this.requestToken;
 
-            this.loading = true;
+            this.loadingMore = true;
 
             try {
                 // Build query parameters
                 const params = new URLSearchParams();
                 params.append('page', nextPage);
                 params.append('per_page', this.perPage);
+
+                // Without this the timeline was the worst case of all: each Load
+                // More re-read an offset into a list that had grown since the
+                // previous one, so the rows it appended overlapped the rows
+                // already on screen.
+                if (this.anchorId != null && this.anchorTime != null) {
+                    params.append('anchor_id', this.anchorId);
+                    params.append('anchor_time', this.anchorTime);
+                }
 
                 // Add filters to params
                 Object.keys(this.currentFilters || {}).forEach(key => {
@@ -355,24 +444,46 @@ function activityDashboard() {
 
                 const result = await window.ActivitylogUi.parseJsonResponse(response, 'Loading more activities');
 
-                // Append new activities to existing ones for timeline view
+                // A filter change or view switch may have reloaded the list while
+                // this request was in flight; appending a stale page would
+                // duplicate or interleave rows.
+                if (token !== this.requestToken) {
+                    return;
+                }
+
                 if (result.data && result.data.length > 0) {
+                    // Append new activities to existing ones for timeline view.
+                    // No success toast: the appended rows and the "showing X of Y"
+                    // counter below the button already report the result.
                     this.activities = [...this.activities, ...result.data];
                     this.currentPage = nextPage;
                     this.totalPages = result.last_page || 1;
-
-                    if (window.notify) {
-                        window.notify.success('Success', `Loaded ${result.data.length} more activities`);
-                    }
+                } else {
+                    // Empty page: stop here rather than ignore it, which left the
+                    // button visible re-requesting the same page forever. Clamp
+                    // downward only — claiming pages we never appended would skip
+                    // rows that are still there.
+                    this.currentPage = Math.min(this.currentPage, result.last_page || 1);
+                    this.totalPages = this.currentPage;
                 }
 
             } catch (error) {
+                // A reload already replaced what this request was appending to,
+                // so its failure is no longer something the user can act on.
+                if (token !== this.requestToken) {
+                    return;
+                }
+
                 console.error('Error loading more activities:', error);
                 if (window.notify) {
                     window.notify.error('Error', 'Failed to load more activities');
                 }
             } finally {
-                this.loading = false;
+                // Only release the lock if this request still owns it. A reload
+                // may have cleared it and a newer "load more" may already hold it.
+                if (token === this.requestToken) {
+                    this.loadingMore = false;
+                }
             }
         },
 
@@ -396,29 +507,22 @@ function activityDashboard() {
                     window.notify.info('Timeline View', message);
                 }
             } else if (view === 'table') {
-                // Table view can handle any page - maintain current pagination
-            this.loadActivities();
-
-                if (window.notify && previousView === 'timeline' && this.currentPage > 1) {
-                    window.notify.info('Table View', `Showing page ${this.currentPage} of activities`);
-                }
+                // Starts at page 1. In timeline, currentPage is an append cursor —
+                // after three Load Mores it is 3 while the user is looking at rows
+                // 1-75 — so carrying it over would drop them on rows 51-75 of a page
+                // they never chose. Table paging needs its own state to do better.
+                this.loadActivities();
             } else if (view === 'analytics') {
-                // Analytics doesn't use pagination
-                this.reloadAnalytics();
+                // Nothing to do: analytics has no pagination, and the component
+                // watches currentView to load itself the first time it is shown.
             }
         },
 
         // Reload analytics with current filters
-        reloadAnalytics() {
-            // Find the analytics component and reload it
-            const analyticsComponent = document.querySelector('[x-data*="analyticsDashboard"]');
-            if (analyticsComponent && analyticsComponent._x_dataStack) {
-                const component = analyticsComponent._x_dataStack[0];
-                if (component && component.loadAnalytics) {
-                    component.loadAnalytics(this.currentFilters);
-                }
-            }
-        }
+        // reloadAnalytics() used to live here, querying the DOM for
+        // [x-data*="analyticsDashboard"] — a component name that does not exist,
+        // so it matched nothing and silently did nothing. The analytics component
+        // now listens for filter-changed itself.
     }
 }
 </script>

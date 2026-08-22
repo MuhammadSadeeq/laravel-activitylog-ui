@@ -21,6 +21,76 @@ class ExportService
         $this->activitylogService = $activitylogService;
     }
 
+
+    /**
+     * The disk exports are written to and read from.
+     *
+     * Everything here used to write through the default disk while only the
+     * download URL consulted this setting, so configuring exports.disk = s3 wrote
+     * the file locally and then handed out an S3 link to an object that was never
+     * created.
+     */
+    public function disk(): \Illuminate\Contracts\Filesystem\Filesystem
+    {
+        return Storage::disk($this->diskName());
+    }
+
+    public function diskName(): string
+    {
+        return (string) config('activitylog-ui.exports.disk', 'local');
+    }
+
+
+    /**
+     * Fail loudly when a write did not happen.
+     *
+     * Laravel's filesystem returns false rather than throwing when exceptions are
+     * disabled, so an unwritable disk otherwise produced a "completed" export and
+     * an email announcing a file that was never created.
+     */
+    protected function assertWritten(bool $written, string $path): void
+    {
+        if (! $written) {
+            throw new \RuntimeException("Failed to write the export to [{$path}] on disk [{$this->diskName()}].");
+        }
+    }
+
+    /**
+     * Neutralise a formula in a cell destined for a CSV file.
+     *
+     * A logged description or causer name beginning with =, +, - or @ is executed
+     * as a formula when a spreadsheet application opens the CSV, which turns an
+     * audit export into a delivery mechanism for whatever an attacker managed to
+     * get logged. There is no cell type in a CSV to distinguish the two, so the
+     * whole set has to be covered.
+     */
+    public static function neutraliseFormula(mixed $value): mixed
+    {
+        if (!is_string($value) || $value === '') {
+            return $value;
+        }
+
+        return in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true) ? "'" . $value : $value;
+    }
+
+    /**
+     * The same, for a cell written into an XLSX workbook.
+     *
+     * A workbook stores formulas as their own cell type rather than inferring
+     * them from the text, and PhpSpreadsheet's value binder promotes a string to
+     * one only when it begins with '='. Applying the CSV set here corrupted
+     * ordinary audit text: a description of "- payment reversed" was written as
+     * "'- payment reversed", which is then what the export says happened.
+     */
+    public static function neutraliseWorkbookFormula(mixed $value): mixed
+    {
+        if (!is_string($value) || $value === '' || $value[0] !== '=') {
+            return $value;
+        }
+
+        return "'" . $value;
+    }
+
     /**
      * Export activities to specified format.
      */
@@ -28,13 +98,78 @@ class ExportService
     {
         $activities = $this->getActivitiesForExport($filters, $options);
 
-        return match ($format) {
+        $path = match ($format) {
             'csv' => $this->exportToCsv($activities, $options),
             'xlsx' => $this->exportToExcel($activities, $options),
             'pdf' => $this->exportToPdf($activities, $options),
             'json' => $this->exportToJson($activities, $options),
             default => throw new \InvalidArgumentException("Unsupported export format: {$format}"),
         };
+
+        $this->recordOwner($path, $options['owner_id'] ?? null);
+
+        return $path;
+    }
+
+    /**
+     * Remember who an export belongs to.
+     *
+     * The download endpoint receives a path and nothing else, so without this it
+     * could only ask "may this user use the export feature at all" — and every
+     * user who could was then able to download every other user's export by
+     * naming its file. An audit export is a filtered extract of the audit log,
+     * so that is a disclosure of exactly the records the filters were hiding.
+     */
+    protected function recordOwner(string $path, int|string|null $ownerId): void
+    {
+        try {
+            cache()->put(
+                $this->ownerCacheKey($path),
+                ['owner_id' => $ownerId],
+                // Outlives the files themselves, so a record never expires while
+                // the export it protects is still downloadable.
+                now()->addHours((int) config('activitylog-ui.exports.cleanup.after_hours', 24) + 24)
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Could not record the owner of an export', ['path' => $path, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Whether a user may download a given export.
+     *
+     * Fails closed. An export whose owner cannot be established is refused
+     * rather than served: the files live for a day by default, so the cost of
+     * being wrong is a re-export, while the cost of guessing the other way is
+     * handing someone else's audit extract over.
+     */
+    public function userMayDownload(string $path, int|string|null $userId): bool
+    {
+        try {
+            $record = cache()->get($this->ownerCacheKey($path));
+        } catch (\Throwable $e) {
+            Log::warning('Could not read the owner of an export', ['path' => $path, 'error' => $e->getMessage()]);
+
+            return false;
+        }
+
+        if (!is_array($record) || !array_key_exists('owner_id', $record)) {
+            return false;
+        }
+
+        // An export made with no authenticated user — authorization disabled, or
+        // a console-triggered run — belongs to no one and is downloadable by
+        // anyone who already passes the route's own checks.
+        if ($record['owner_id'] === null) {
+            return true;
+        }
+
+        return $userId !== null && (string) $record['owner_id'] === (string) $userId;
+    }
+
+    protected function ownerCacheKey(string $path): string
+    {
+        return config('activitylog-ui.performance.cache_prefix') . '.export-owner.' . sha1($path);
     }
 
     /**
@@ -58,6 +193,10 @@ class ExportService
         $activities = new Collection();
 
         Activity::query()
+            // Every format reads causer_name, and JSON reads subject_name too, so
+            // without this each exported row cost a query of its own: roughly
+            // 10,000 extra statements on a 10,000-row export.
+            ->with(['causer', 'subject'])
             ->when($filters, function ($query) use ($filters) {
                 return App::make(ActivitylogService::class)->applyFilters($query, $filters);
             })
@@ -94,19 +233,29 @@ class ExportService
 
         $csvData = $this->prepareCsvData($activities, $options);
 
-        $handle = fopen(Storage::path($path), 'w');
+        // Written through a memory stream rather than fopen(Storage::path(...)):
+        // a path only exists for local disks, so the previous form could not write
+        // to S3 or any other remote disk at all.
+        $handle = fopen('php://temp', 'r+');
 
-        // Write header
         if (!empty($csvData)) {
             fputcsv($handle, array_keys($csvData[0]), ',', '"', '\\');
         }
 
-        // Write data
         foreach ($csvData as $row) {
             fputcsv($handle, $row, ',', '"', '\\');
         }
 
-        fclose($handle);
+        rewind($handle);
+
+        try {
+            // The resource is handed to put() directly: stream_get_contents()
+            // would allocate the whole export as a single string, defeating the
+            // point of writing through a stream at all.
+            $this->assertWritten($this->disk()->put($path, $handle), $path);
+        } finally {
+            fclose($handle);
+        }
 
         return $path;
     }
@@ -125,7 +274,7 @@ class ExportService
         $filename = $this->generateFilename('xlsx');
         $path = $this->getExportPath($filename);
 
-        Excel::store(new ActivitiesExport($activities, $options), $path);
+        $this->assertWritten(Excel::store(new ActivitiesExport($activities, $options), $path, $this->diskName()), $path);
 
         return $path;
     }
@@ -148,6 +297,9 @@ class ExportService
             'activities' => $activities,
             'title' => $options['title'] ?? 'Activity Log Report',
             'generated_at' => now(),
+            // Both keys: the shipped view reads $filters, while filters_applied is
+            // what published views may already reference.
+            'filters' => $options['applied_filters'] ?? [],
             'filters_applied' => $options['applied_filters'] ?? [],
             'total_count' => $activities->count(),
             'export_options' => $options,
@@ -159,7 +311,7 @@ class ExportService
             $pdf->setPaper('a4', 'landscape');
         }
 
-        Storage::put($path, $pdf->output());
+        $this->assertWritten($this->disk()->put($path, $pdf->output()), $path);
 
         return $path;
     }
@@ -200,7 +352,7 @@ class ExportService
             }),
         ];
 
-        Storage::put($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $this->assertWritten($this->disk()->put($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)), $path);
 
         return $path;
     }
@@ -235,7 +387,9 @@ class ExportService
                 };
             }
 
-            return $row;
+            // Applied at the row level so every column is covered, including any
+            // custom ones supplied through options['columns'].
+            return array_map([static::class, 'neutraliseFormula'], $row);
         })->toArray();
     }
 
@@ -251,12 +405,57 @@ class ExportService
     }
 
     /**
+     * The default export directory, used when the configured one is unusable.
+     */
+    public const DEFAULT_PATH = 'exports/activity-logs';
+
+    /**
+     * Guard so the misconfiguration below is logged once per process rather than
+     * once per export.
+     */
+    protected static bool $reportedPathFallback = false;
+
+    /**
+     * The directory exports live in, as a disk-relative path with no surrounding
+     * slashes.
+     *
+     * The writer took config('exports.path') verbatim while the download endpoint
+     * compared against a trimmed copy, so a perfectly reasonable value like
+     * '/exports/logs/' wrote to '/exports/logs//file.csv' and then rejected every
+     * download of it as being outside the export directory.
+     */
+    public function exportDirectory(): string
+    {
+        $configured = config('activitylog-ui.exports.path', self::DEFAULT_PATH);
+        $path = is_string($configured) ? trim(str_replace('\\', '/', $configured), '/') : '';
+
+        // An empty value, '/' or '.' all resolve to the root of the disk. That
+        // would put exports beside the rest of the disk's contents and, because
+        // the download endpoint's only containment check is "inside the export
+        // directory", turn that endpoint into a reader for every file on the
+        // disk. Treated as unconfigured rather than as an instruction.
+        if ($path === '' || $path === '.') {
+            if (! static::$reportedPathFallback) {
+                static::$reportedPathFallback = true;
+
+                Log::warning('activitylog-ui.exports.path resolves to the root of the disk; using the default directory instead.', [
+                    'configured' => $configured,
+                    'using' => self::DEFAULT_PATH,
+                ]);
+            }
+
+            return self::DEFAULT_PATH;
+        }
+
+        return $path;
+    }
+
+    /**
      * Get full export path.
      */
     protected function getExportPath(string $filename): string
     {
-        $basePath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        return "{$basePath}/{$filename}";
+        return $this->exportDirectory() . '/' . $filename;
     }
 
     /**
@@ -264,13 +463,11 @@ class ExportService
      */
     public function getDownloadUrl(string $path): string
     {
-        $disk = config('activitylog-ui.exports.disk', 'local');
-
-        if ($disk === 'local') {
-            return route('activitylog-ui.export.download', ['path' => base64_encode($path)]);
-        }
-
-        return Storage::disk($disk)->url($path);
+        // Always through the authorised endpoint. Returning $disk->url() handed
+        // out a direct link to the object — public or unsigned depending on the
+        // disk — so an audit export left the package's authorization behind
+        // entirely, and on a private disk the link simply did not work.
+        return route('activitylog-ui.export.download', ['path' => base64_encode($path)]);
     }
 
     /**
@@ -284,18 +481,43 @@ class ExportService
         }
 
         $hours = config('activitylog-ui.exports.cleanup.after_hours', 24);
+
+        // A retention of zero means "delete anything at least zero seconds old",
+        // which includes the export written moments earlier — with queue.default
+        // set to sync, cleanup runs just after the file is created, so the job
+        // reported a completed export whose download 404s. There is no reading of
+        // that setting under which it does something useful.
+        if (!is_numeric($hours) || $hours <= 0) {
+            Log::warning('activitylog-ui.exports.cleanup.after_hours must be greater than zero; skipping cleanup.', [
+                'configured' => $hours,
+            ]);
+
+            return 0;
+        }
+
         $cutoff = now()->subHours($hours);
 
-        $basePath = config('activitylog-ui.exports.path', 'exports/activity-logs');
-        $files = Storage::files($basePath);
+        $disk = $this->disk();
+
+        // files() rather than allFiles(): exports are written flat into this one
+        // directory, and recursing would delete whatever else the host keeps
+        // below it.
+        $files = $disk->files($this->exportDirectory());
 
         $deletedCount = 0;
 
         foreach ($files as $file) {
-            $lastModified = Storage::lastModified($file);
+            // One metadata call per file, which on a remote disk is one request
+            // per file. A file that disappeared under us — a concurrent cleanup,
+            // or another worker — must not abort the sweep.
+            try {
+                $lastModified = $disk->lastModified($file);
+            } catch (\Throwable $e) {
+                continue;
+            }
 
             if ($lastModified < $cutoff->timestamp) {
-                Storage::delete($file);
+                $disk->delete($file);
                 $deletedCount++;
             }
         }
@@ -311,10 +533,19 @@ class ExportService
     /**
      * Get export progress for queued exports.
      */
-    public function getExportProgress(string $jobId): array
+    public function getExportProgress(string $jobId, int|string|null $userId = null): array
     {
         // Get job status from cache
         $status = cache()->get("export_job_{$jobId}");
+
+        // Answered as "not found" rather than "forbidden", so the endpoint does
+        // not confirm which job ids exist. The status carries a download URL, so
+        // it is as sensitive as the file.
+        if (is_array($status) && array_key_exists('user_id', $status) && $status['user_id'] !== null) {
+            if ($userId === null || (string) $status['user_id'] !== (string) $userId) {
+                $status = null;
+            }
+        }
 
         if (!$status) {
             return [
@@ -393,14 +624,13 @@ class ExportService
     /**
      * Queue an export job for large datasets.
      */
-    public function queueExport(array $filters, string $format, array $options = [], ?int $userId = null): string
+    public function queueExport(array $filters, string $format, array $options = [], int|string|null $userId = null): string
     {
-        $jobId = uniqid('export_');
-
-        // Auto-cleanup old files if enabled
-        if (config('activitylog-ui.exports.cleanup.auto_run', true)) {
-            $this->cleanupOldExports();
-        }
+        // Cryptographically random, because the id is the only thing a caller
+        // presents when asking after a job. uniqid() is the current microsecond
+        // in hex, so ids issued around the same moment differ in their last few
+        // characters and another user's job was guessable rather than secret.
+        $jobId = 'export_' . bin2hex(random_bytes(16));
 
         try {
             // Create initial job status
@@ -410,6 +640,7 @@ class ExportService
                 'message' => 'Export queued for processing...',
                 'progress' => 0,
                 'download_url' => null,
+                'user_id' => $userId,
                 'created_at' => now()->toISOString(),
                 'updated_at' => now()->toISOString(),
             ];
@@ -420,17 +651,7 @@ class ExportService
             // Dispatch the job
             $job = new \MuhammadSadeeq\ActivitylogUi\Jobs\ExportActivitiesJob($jobId, $filters, $format, $options, $userId);
             dispatch($job);
-
-            \Log::info('Export job queued successfully', [
-                'job_id' => $jobId,
-                'format' => $format,
-                'filters' => $filters,
-                'user_id' => $userId
-            ]);
-
-            return $jobId;
-
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             \Log::error('Failed to queue export job', [
                 'job_id' => $jobId,
                 'error' => $e->getMessage()
@@ -443,11 +664,36 @@ class ExportService
                 'message' => 'Failed to queue export: ' . $e->getMessage(),
                 'progress' => 0,
                 'download_url' => null,
+                'user_id' => $userId,
                 'created_at' => now()->toISOString(),
                 'updated_at' => now()->toISOString(),
             ], now()->addHours(24));
 
             throw $e;
         }
+
+        // The job is accepted from here on. A failure while logging must not
+        // mark an already-dispatched (and possibly already-run) export failed.
+        \Log::info('Export job queued successfully', [
+            'job_id' => $jobId,
+            'format' => $format,
+            'filters' => $filters,
+            'user_id' => $userId
+        ]);
+
+        // Housekeeping, so it runs after the work the caller is waiting on. It
+        // used to precede the dispatch, holding the request open for a metadata
+        // call per existing export — a round trip each on a remote disk — and a
+        // failure there threw before anything was queued, so an unreachable
+        // storage backend meant no exports at all rather than no cleanup.
+        if (config('activitylog-ui.exports.cleanup.auto_run', true)) {
+            try {
+                $this->cleanupOldExports();
+            } catch (\Throwable $e) {
+                \Log::warning('Export cleanup failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        return $jobId;
     }
 }

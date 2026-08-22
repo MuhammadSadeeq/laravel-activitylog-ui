@@ -103,10 +103,9 @@ class ActivitylogUiServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         if ($this->app->runningInConsole()) {
-            // Register commands here if any
-            // $this->commands([
-            //     \MuhammadSadeeq\ActivitylogUi\Console\Commands\InstallCommand::class,
-            // ]);
+            $this->commands([
+                \MuhammadSadeeq\ActivitylogUi\Console\ClearCacheCommand::class,
+            ]);
         }
     }
 
@@ -126,6 +125,14 @@ class ActivitylogUiServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__ . '/resources/views' => resource_path('views/vendor/activitylog-ui'),
         ], 'activitylog-ui-views');
+
+        // Opt-in: the log is Spatie's table, and indexing an established one
+        // locks it for the duration. Publish, read, and run it when it suits.
+        $this->publishes([
+            __DIR__ . '/database/migrations/add_activitylog_ui_indexes.php.stub' => database_path(
+                'migrations/' . date('Y_m_d_His') . '_add_activitylog_ui_indexes.php'
+            ),
+        ], 'activitylog-ui-migrations');
 
         // Publish images (logo, favicon, etc.)
         $this->publishes([

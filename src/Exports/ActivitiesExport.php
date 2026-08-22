@@ -8,10 +8,35 @@ use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 use Maatwebsite\Excel\Concerns\WithStyles;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
-class ActivitiesExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize
+class ActivitiesExport extends DefaultValueBinder implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize, WithCustomValueBinder
 {
+    /**
+     * Write every string as a string, and never as a formula.
+     *
+     * PhpSpreadsheet's default binder promotes any value starting with '=' to a
+     * formula, which is how a logged description could execute when the workbook
+     * was opened. Prefixing an apostrophe stopped that but changed the data: a
+     * description of "=SUM(A1:A2)" was exported as "'=SUM(A1:A2)", and an audit
+     * export that alters what it reports is its own kind of wrong. Binding the
+     * type explicitly keeps the value exactly as recorded and inert.
+     */
+    public function bindValue(Cell $cell, $value): bool
+    {
+        if (is_string($value) && $value !== '') {
+            $cell->setValueExplicit($value, DataType::TYPE_STRING);
+
+            return true;
+        }
+
+        return parent::bindValue($cell, $value);
+    }
+
     protected Collection $activities;
     protected array $options;
 
@@ -74,6 +99,9 @@ class ActivitiesExport implements FromCollection, WithHeadings, WithMapping, Wit
             };
         }
 
+        // No rewriting here: bindValue() above types every string as a string,
+        // so nothing in a workbook cell is ever evaluated and the exported text
+        // is byte-for-byte what was logged.
         return $row;
     }
 
