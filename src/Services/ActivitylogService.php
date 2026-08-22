@@ -112,21 +112,22 @@ class ActivitylogService
         }
 
         // Causer filters
-        if (!empty($filters['causer_type']) || !empty($filters['causer_id'])) {
-            // No re-casting here: sanitizeId() already chose int or string, and
-            // is_numeric() would turn a 26-digit ULID into PHP_INT_MAX.
-            $causerId = isset($filters['causer_id']) && $filters['causer_id'] !== ''
-                ? $filters['causer_id']
-                : null;
-            $query->byCauser($filters['causer_type'] ?? null, $causerId);
+        //
+        // No re-casting of the id here: sanitizeId() already chose int or string,
+        // and is_numeric() would turn a 26-digit ULID into PHP_INT_MAX.
+        $causerType = $this->presentFilter($filters, 'causer_type');
+        $causerId = $this->presentFilter($filters, 'causer_id');
+
+        if ($causerType !== null || $causerId !== null) {
+            $query->byCauser($causerType, $causerId);
         }
 
         // Subject filters
-        if (!empty($filters['subject_type']) || !empty($filters['subject_id'])) {
-            $subjectId = isset($filters['subject_id']) && $filters['subject_id'] !== ''
-                ? $filters['subject_id']
-                : null;
-            $query->bySubject($filters['subject_type'] ?? null, $subjectId);
+        $subjectType = $this->presentFilter($filters, 'subject_type');
+        $subjectId = $this->presentFilter($filters, 'subject_id');
+
+        if ($subjectType !== null || $subjectId !== null) {
+            $query->bySubject($subjectType, $subjectId);
         }
 
         // Event type filters
@@ -140,6 +141,26 @@ class ActivitylogService
         }
 
         return $query;
+    }
+
+    /**
+     * A filter value the caller actually supplied, or null.
+     *
+     * empty() cannot be used for this: it calls '0' absent, so a causer or
+     * subject whose key really is 0 — legal in MySQL, and present in plenty of
+     * migrated data — passed validation in the controller and was then dropped
+     * here without a word, listing the whole log as though no filter had been
+     * asked for.
+     */
+    protected function presentFilter(array $filters, string $key): int|string|null
+    {
+        $value = $filters[$key] ?? null;
+
+        if ($value === null || $value === '' || is_array($value)) {
+            return null;
+        }
+
+        return is_int($value) ? $value : (string) $value;
     }
 
     /**

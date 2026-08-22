@@ -851,6 +851,15 @@ class ActivityLogController extends Controller
             $this->rejectInput('anchor_id', 'The anchor_id parameter is not a usable identifier.');
         }
 
+        // Unlike a causer or subject id, which is polymorphic and may be anything
+        // the host model uses, this one addresses the activity's own key — and
+        // this UI knows what type that is. On an integer key MySQL coerces
+        // 'abc' to 0 rather than complaining, so an unusable anchor came back as
+        // a page with nothing on it instead of an error.
+        if ($id !== null && !is_int($id) && in_array((new Activity)->getKeyType(), ['int', 'integer'], true)) {
+            $this->rejectInput('anchor_id', 'The anchor_id parameter must be an integer.');
+        }
+
         if (!is_string($rawTime) || preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/', $rawTime) !== 1) {
             $this->rejectInput('anchor_time', 'The anchor_time parameter must be a timestamp of the form Y-m-d H:i:s.');
         }

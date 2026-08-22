@@ -37,6 +37,11 @@ class ExportController extends Controller
         $format = $request->input('format');
         $options = $request->input('options', []);
 
+        // owner_id is recorded by the server to decide who may download the
+        // finished file. It is not an option, and a caller offering one is
+        // answering a question they were not asked.
+        unset($options['owner_id']);
+
         // Filters arrive nested in a JSON body, so they never pass through the
         // dashboard's own extraction. Normalise them the same way: `filters` is
         // only validated as an array, and a nested array inside it reaches a

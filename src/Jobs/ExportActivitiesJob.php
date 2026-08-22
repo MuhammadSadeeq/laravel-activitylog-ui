@@ -75,7 +75,11 @@ class ExportActivitiesJob implements ShouldQueue
             $filePath = $exportService->export(
                 $this->filters,
                 $this->format,
-                $this->options + ['owner_id' => $this->userId]
+                // array_merge, not +. The union operator keeps the left-hand
+                // key, so a caller who put owner_id in the options they posted
+                // decided who the extract belonged to — and the synchronous path
+                // assigns it, so the two disagreed about who was in charge.
+                array_merge($this->options, ['owner_id' => $this->userId])
             );
             $downloadUrl = $exportService->getDownloadUrl($filePath);
 
