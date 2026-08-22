@@ -706,47 +706,6 @@ class ActivitylogService
     }
 
     /**
-     * Search activities with autocomplete suggestions.
-     */
-    public function searchWithSuggestions(string $query): array
-    {
-        $activities = Activity::search($query)
-            ->with(['causer', 'subject'])
-            ->limit(10)
-            ->get();
-
-        $suggestions = [
-            'descriptions' => Activity::where('description', 'like', "%{$query}%")
-                ->distinct()
-                ->limit(5)
-                ->pluck('description')
-                ->toArray(),
-            'causers' => Activity::whereHas('causer', function ($q) use ($query) {
-                $q->where('name', 'like', "%{$query}%")
-                  ->orWhere('email', 'like', "%{$query}%");
-            })
-            ->with('causer')
-            ->limit(5)
-            ->get()
-            ->map(function ($activity) {
-                return [
-                    'id' => $activity->causer_id,
-                    'name' => $activity->causer_name,
-                    'type' => $activity->causer_type,
-                ];
-            })
-            ->unique('id')
-            ->values()
-            ->toArray(),
-        ];
-
-        return [
-            'activities' => $activities,
-            'suggestions' => $suggestions,
-        ];
-    }
-
-    /**
      * Get activity detail with enhanced information.
      */
     public function getActivityDetail(int|string $id): ?Activity
@@ -811,62 +770,96 @@ class ActivitylogService
 
     /**
      * Get search suggestions for autocomplete.
+     *
+     * Every limit here is in the query rather than applied to the result. The
+     * previous form hydrated the entire activity table with its causers to find
+     * five names, and pulled every distinct matching description into memory
+     * before taking five of those — at 200,000 activities the endpoint ran out
+     * of memory rather than answering.
      */
     public function getSearchSuggestions(string $query): Collection
     {
-        $suggestions = collect();
-
-        if (strlen($query) >= 2) {
-            // Get causer suggestions
-            $causers = Activity::whereNotNull('causer_id')
-                ->with('causer')
-                ->get()
-                ->pluck('causer')
-                ->filter()
-                ->unique('id')
-                ->filter(function ($causer) use ($query) {
-                    return stripos($causer->name ?? '', $query) !== false ||
-                           stripos($causer->email ?? '', $query) !== false;
-                })
-                ->take(5)
-                ->map(function ($causer) {
-                    return [
-                        'value' => $causer->name,
-                        'label' => $causer->name . ' (' . $causer->email . ')',
-                        'type' => 'User'
-                    ];
-                });
-
-            // Get description suggestions
-            $descriptions = Activity::where('description', 'like', "%{$query}%")
-                ->distinct()
-                ->pluck('description')
-                ->take(5)
-                ->map(function ($description) {
-                    return [
-                        'value' => $description,
-                        'label' => $description,
-                        'type' => 'Description'
-                    ];
-                });
-
-            // Get subject type suggestions
-            $subjectTypes = Activity::where('subject_type', 'like', "%{$query}%")
-                ->distinct()
-                ->pluck('subject_type')
-                ->take(3)
-                ->map(function ($type) {
-                    return [
-                        'value' => $type,
-                        'label' => class_basename($type),
-                        'type' => 'Model'
-                    ];
-                });
-
-            $suggestions = $causers->concat($descriptions)->concat($subjectTypes);
+        if (strlen($query) < 2) {
+            return collect();
         }
 
-        return $suggestions->take(10);
+        return collect()
+            ->concat($this->causerSuggestions($query))
+            ->concat($this->columnSuggestions('description', $query, 5, fn (string $value) => [
+                'value' => $value,
+                'label' => $value,
+                'type' => 'Description',
+            ]))
+            ->concat($this->columnSuggestions('subject_type', $query, 3, fn (string $value) => [
+                'value' => $value,
+                'label' => class_basename($value),
+                'type' => 'Model',
+            ]))
+            ->take(10)
+            ->values();
+    }
+
+    /**
+     * Causer suggestions, drawn from the same list the filter dropdown uses.
+     *
+     * Which means they are already deduplicated by type and id, already cached,
+     * and already resolved through the configured display attributes — so this
+     * cannot publish an email that filters.expose_causer_email withholds, which
+     * the previous form did in both the value it matched on and the label it
+     * returned.
+     *
+     * @return Collection<int, array<string, string>>
+     */
+    protected function causerSuggestions(string $query): Collection
+    {
+        $exposeEmail = (bool) config('activitylog-ui.filters.expose_causer_email', false);
+
+        return $this->getAvailableCausers()
+            ->filter(function (array $causer) use ($query, $exposeEmail) {
+                if (stripos((string) $causer['name'], $query) !== false) {
+                    return true;
+                }
+
+                return $exposeEmail && stripos((string) ($causer['email'] ?? ''), $query) !== false;
+            })
+            ->take(5)
+            ->map(fn (array $causer) => [
+                'value' => (string) $causer['name'],
+                'label' => (string) $causer['label'],
+                'type' => 'User',
+            ])
+            ->values();
+    }
+
+    /**
+     * Distinct values of one activity column matching a substring.
+     *
+     * @param  callable(string): array<string, string>  $format
+     * @return Collection<int, array<string, string>>
+     */
+    protected function columnSuggestions(string $column, string $query, int $limit, callable $format): Collection
+    {
+        return Activity::query()
+            ->whereNotNull($column)
+            ->where($column, 'like', '%' . $this->escapeLike($query) . '%')
+            ->distinct()
+            ->limit($limit)
+            ->pluck($column)
+            ->filter(fn ($value) => is_string($value) && $value !== '')
+            ->map($format)
+            ->values();
+    }
+
+    /**
+     * Neutralise the wildcards LIKE would otherwise read as syntax.
+     *
+     * Bindings keep this safe either way; what they do not do is stop a typed
+     * '%' from matching the whole table and a typed '_' from matching more than
+     * the user asked for.
+     */
+    protected function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
     }
 
     /**

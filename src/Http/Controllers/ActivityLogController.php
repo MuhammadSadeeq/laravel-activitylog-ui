@@ -146,26 +146,6 @@ class ActivityLogController extends Controller
     }
 
     /**
-     * Search activities with suggestions.
-     */
-    public function search(Request $request): JsonResponse
-    {
-        $this->authorize('viewActivityLogUi');
-
-        $request->validate([
-            'query' => 'required|string|min:2|max:100',
-        ]);
-
-        $query = $request->input('query');
-        $results = $this->activitylogService->searchWithSuggestions($query);
-
-        return response()->json([
-            'success' => true,
-            'data' => $results,
-        ]);
-    }
-
-    /**
      * Save a custom view.
      */
     public function saveView(Request $request): JsonResponse
