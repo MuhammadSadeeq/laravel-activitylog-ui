@@ -36,7 +36,14 @@
                         </span>
                     </div>
 
-                    <p class="al-break" style="font-size:var(--step-1)" x-text="activity.description"></p>
+                    {{-- Only when it says something the badge above has not.
+                         Three quarters of the activities in a typical log are
+                         recorded with the event as their description, which put
+                         "updated" in prose directly under an Updated badge. --}}
+                    <p class="al-break"
+                       style="font-size:var(--step-1)"
+                       x-show="window.ActivitylogUi.extraDescription(activity)"
+                       x-text="window.ActivitylogUi.extraDescription(activity)"></p>
 
                     <dl class="al-diff">
                         <div class="al-diff__row">
