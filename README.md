@@ -77,7 +77,20 @@ composer require maatwebsite/excel barryvdh/laravel-dompdf
    php artisan vendor:publish --provider="Spatie\Activitylog\ActivitylogServiceProvider" --tag="activitylog-migrations"
    php artisan migrate
    ```
-4. **Visit the UI**   
+4. **(Recommended on a large log) Add the UI’s indexes**   
+   Spatie indexes the log for lookups by subject and causer. This UI lists
+   everything newest first, which nothing indexes — on a log of 200,000 rows
+   MySQL answers a single page by reading every row and sorting the lot.
+   ```bash
+   php artisan vendor:publish --provider="MuhammadSadeeq\ActivitylogUi\ActivitylogUiServiceProvider" --tag="activitylog-ui-migrations"
+   php artisan migrate
+   ```
+   Measured on 204,963 activities, this took the first page from 350&nbsp;ms to
+   21&nbsp;ms and let the analytics queries read an index instead of the table.
+   It is a separate step because `activity_log` is Spatie’s table and because
+   building an index on an established log locks it while it runs — about a
+   second at that size, longer on a bigger one.
+5. **Visit the UI**   
    ```
    /activitylog-ui   # default route prefix
    ```

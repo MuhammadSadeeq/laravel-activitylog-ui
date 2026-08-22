@@ -1,0 +1,64 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use MuhammadSadeeq\ActivitylogUi\Models\Activity;
+
+/**
+ * Index the activity log for the way this UI reads it.
+ *
+ * Spatie indexes the log for the questions its own API asks — "what happened to
+ * this subject", "what did this causer do". The UI asks a different one: it
+ * lists everything newest first, ordered by created_at with the key as a
+ * tiebreak, and nothing indexes that. On a log of 200,000 rows MySQL answers a
+ * page of 25 by reading every row and sorting the lot.
+ *
+ * Kept out of the package's automatic migrations because activity_log belongs to
+ * Spatie, and because building an index on an established log locks it for as
+ * long as that takes. Publish it, read it, and run it when it suits you.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $model = new Activity;
+        $table = $model->getTable();
+        $connection = $model->getConnectionName();
+        $schema = Schema::connection($connection);
+
+        if (! $schema->hasTable($table)) {
+            return;
+        }
+
+        $schema->table($table, function (Blueprint $blueprint) use ($model, $schema, $table) {
+            // The listing's ordering. The key is second so that activities sharing
+            // a timestamp still come back in one settled order — pagination pins
+            // itself to that pair, and a tie it cannot break is a row that moves
+            // between pages.
+            $this->addIndex($blueprint, $schema, $table, ['created_at', $model->getKeyName()], 'activity_log_ui_recent_index');
+
+            // Analytics counts events within a date range. Leading with the range
+            // lets one index serve both the window and the grouping.
+            $this->addIndex($blueprint, $schema, $table, ['created_at', 'event'], 'activity_log_ui_events_index');
+        });
+    }
+
+    /**
+     * @param  array<int, string>  $columns
+     */
+    protected function addIndex(Blueprint $blueprint, $schema, string $table, array $columns, string $name): void
+    {
+        foreach ($columns as $column) {
+            if (! $schema->hasColumn($table, $column)) {
+                return;
+            }
+        }
+
+        if ($schema->hasIndex($table, $name)) {
+            return;
+        }
+
+        $blueprint->index($columns, $name);
+    }
+};
