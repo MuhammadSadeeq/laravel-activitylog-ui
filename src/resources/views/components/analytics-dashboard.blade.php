@@ -359,6 +359,14 @@ document.addEventListener('alpine:init', () => {
 
                 const data = await window.ActivitylogUi.parseJsonResponse(response, 'Loading analytics dashboard');
 
+                // The selection may have moved on while this was in flight. A
+                // slow request for the previous filters would otherwise land
+                // after a fast one for the current filters and overwrite the
+                // figures with the very staleness this check exists to prevent.
+                if (query !== this.analyticsQuery()) {
+                    return;
+                }
+
                 if (data.success) {
                     this.stats = {
                         total: data.data.total_activities,
@@ -383,12 +391,21 @@ document.addEventListener('alpine:init', () => {
                     this.loadedQuery = query;
                 }
             } catch (error) {
+                if (query !== this.analyticsQuery()) {
+                    return;
+                }
+
                 console.error('Error loading analytics:', error);
                 if (window.notify) {
                     window.notify.error('Error', 'Failed to load analytics data');
                 }
             } finally {
-                this.loading = false;
+                // Only the request that still matches the selection may clear the
+                // spinner; an overtaken one finishing first would otherwise
+                // report the newer request as done.
+                if (query === this.analyticsQuery()) {
+                    this.loading = false;
+                }
             }
         },
 

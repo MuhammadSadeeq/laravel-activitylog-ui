@@ -40,11 +40,24 @@ class Activity extends SpatieActivity
     protected static bool $resolvingActivitySource = false;
 
     /**
-     * Validated instances of the configured activity model, keyed by class name.
+     * Configured model classes that have passed the checks below.
      *
-     * @var array<class-string, Model>
+     * @var array<class-string, true>
      */
-    protected static array $resolvedActivityModels = [];
+    protected static array $validatedActivityModels = [];
+
+    /**
+     * Key metadata per configured model class.
+     *
+     * Safe to keep, unlike the table: which column is the key, whether it
+     * increments and what type it is are facts about the class, settled by its
+     * declaration. Where the model reads from is not — an application can point
+     * it at a different table per tenant, and that is exactly what must not be
+     * answered from something cached.
+     *
+     * @var array<class-string, array{key_name: string, key_type: string, incrementing: bool}>
+     */
+    protected static array $activityKeyMetadata = [];
 
     /**
      * Spatie v5 dropped activitylog.table_name and database_connection, so a
@@ -53,11 +66,16 @@ class Activity extends SpatieActivity
      * the UI reads activity_log while the application writes somewhere else
      * entirely (issue #9).
      *
-     * Resolved here rather than in the constructor, so a model that derives its
-     * table from request or tenant context is followed rather than frozen at
-     * whatever it returned first. That means asking it afresh every time, and
-     * Eloquent asks often — getKeyName() alone runs on every relation load,
-     * every route-model bind and every serialised row.
+     * The configured model is built afresh on every call, so one that picks its
+     * table or connection in its constructor — the usual way an application
+     * makes the log per-tenant — is followed rather than frozen at whatever the
+     * first request happened to resolve. Serving a second tenant the first
+     * tenant's table would be a disclosure, not merely stale data.
+     *
+     * What is cached is the part that cannot vary that way: whether the class
+     * passed validation, and its key metadata. Eloquent asks for the key name
+     * constantly, and those three answers are settled by the class declaration,
+     * so getKeyName() is answered without building anything.
      */
     public function getTable()
     {
@@ -79,17 +97,17 @@ class Activity extends SpatieActivity
      */
     public function getKeyName()
     {
-        return static::configuredActivitySource()['key_name'] ?? parent::getKeyName();
+        return static::configuredKeyMetadata()['key_name'] ?? parent::getKeyName();
     }
 
     public function getKeyType()
     {
-        return static::configuredActivitySource()['key_type'] ?? parent::getKeyType();
+        return static::configuredKeyMetadata()['key_type'] ?? parent::getKeyType();
     }
 
     public function getIncrementing()
     {
-        return static::configuredActivitySource()['incrementing'] ?? parent::getIncrementing();
+        return static::configuredKeyMetadata()['incrementing'] ?? parent::getIncrementing();
     }
 
     /**
@@ -107,22 +125,13 @@ class Activity extends SpatieActivity
             return null;
         }
 
-        // The instance is kept, its answers are not. Checking the class and
-        // constructing it is the expensive half and cannot change while the
-        // config still names the same class; asking that instance for its table
-        // is cheap and is where tenant-derived values come from, so it still
-        // happens on every call. Keying on the class name means reconfiguring
-        // between requests resolves afresh rather than serving the previous
-        // model's table.
-        $instance = static::$resolvedActivityModels[$class] ?? null;
-
-        if ($instance !== null) {
-            return static::describeActivitySource($instance);
-        }
-
         static::$resolvingActivitySource = true;
 
         try {
+            if (isset(static::$validatedActivityModels[$class])) {
+                return static::describeActivitySource(new $class);
+            }
+
             if (!class_exists($class)) {
                 throw new \RuntimeException(
                     "activitylog.activity_model is set to [{$class}], which does not exist. "
@@ -141,10 +150,9 @@ class Activity extends SpatieActivity
                 );
             }
 
-            $instance = new $class;
-            static::$resolvedActivityModels[$class] = $instance;
+            static::$validatedActivityModels[$class] = true;
 
-            return static::describeActivitySource($instance);
+            return static::describeActivitySource(new $class);
         } catch (\Throwable $e) {
             // Fail closed. Falling back to the default table here would quietly
             // show whichever log the default connection holds — in a multi-tenant
@@ -162,29 +170,62 @@ class Activity extends SpatieActivity
     }
 
     /**
-     * Ask the configured model where it reads from.
+     * Ask a freshly built configured model where it reads from.
      *
-     * Under the same guard the construction runs under, because a configured
-     * model that extends this one inherits these very overrides and would
-     * otherwise ask itself the question it is being asked.
+     * Called with the re-entrancy guard already held, because a configured model
+     * that extends this one inherits these very overrides and would otherwise
+     * ask itself the question it is being asked.
      *
      * @return array{table: string, connection: string|null, key_name: string, key_type: string, incrementing: bool}
      */
     protected static function describeActivitySource(Model $instance): array
     {
-        static::$resolvingActivitySource = true;
+        static::$activityKeyMetadata[$instance::class] ??= [
+            'key_name' => $instance->getKeyName(),
+            'key_type' => $instance->getKeyType(),
+            'incrementing' => $instance->getIncrementing(),
+        ];
 
-        try {
-            return [
-                'table' => $instance->getTable(),
-                'connection' => $instance->getConnectionName(),
-                'key_name' => $instance->getKeyName(),
-                'key_type' => $instance->getKeyType(),
-                'incrementing' => $instance->getIncrementing(),
-            ];
-        } finally {
-            static::$resolvingActivitySource = false;
+        return static::$activityKeyMetadata[$instance::class] + [
+            'table' => $instance->getTable(),
+            'connection' => $instance->getConnectionName(),
+        ];
+    }
+
+    /**
+     * Key metadata alone, without building the configured model.
+     *
+     * This is the hot path. Eloquent asks for the key name constantly — on every
+     * relation load, every route-model bind, every serialised row — and building
+     * the configured model to answer each time cost a page of 25 activities
+     * hundreds of constructions. The table deliberately does not come through
+     * here, because that one has to be asked afresh.
+     *
+     * @return array{key_name: string, key_type: string, incrementing: bool}|null
+     */
+    protected static function configuredKeyMetadata(): ?array
+    {
+        if (static::$resolvingActivitySource) {
+            return null;
         }
+
+        $class = config('activitylog.activity_model');
+
+        if (!is_string($class) || $class === '' || $class === static::class) {
+            return null;
+        }
+
+        if (isset(static::$activityKeyMetadata[$class])) {
+            return static::$activityKeyMetadata[$class];
+        }
+
+        // Not seen yet: fall through to full resolution, which validates the
+        // class and populates the metadata as a side effect.
+        $source = static::configuredActivitySource();
+
+        return $source === null
+            ? null
+            : ['key_name' => $source['key_name'], 'key_type' => $source['key_type'], 'incrementing' => $source['incrementing']];
     }
 
     /**
@@ -193,7 +234,8 @@ class Activity extends SpatieActivity
      */
     public static function forgetConfiguredActivitySource(): void
     {
-        static::$resolvedActivityModels = [];
+        static::$validatedActivityModels = [];
+        static::$activityKeyMetadata = [];
         static::$hasAttributeChangesColumn = [];
     }
 

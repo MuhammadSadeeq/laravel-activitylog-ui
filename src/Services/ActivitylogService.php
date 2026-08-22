@@ -60,8 +60,13 @@ class ActivitylogService
      * log — out of every page after the first, with the footer still reporting
      * the full count.
      *
-     * Comparing the pair is also correct for UUID and ULID keys, which is why
-     * this no longer asks whether the key increments.
+     * The pair is compared rather than the key alone, so this no longer asks
+     * whether the key increments. That is a large improvement for random UUID
+     * and ULID keys and not a complete fix: within a single timestamp the key is
+     * still the tiebreak, so a row inserted at the anchor's exact time with a
+     * lower random key does join the frozen set. The window is one timestamp
+     * wide instead of the whole listing, and narrower still because the anchor
+     * carries microseconds, but it is not zero.
      *
      * @param  array{time: string, id: int|string}|null  $anchor
      */
@@ -860,9 +865,24 @@ class ActivitylogService
      */
     protected function columnSuggestions(string $column, string $query, int $limit, callable $format): Collection
     {
+        $model = new Activity;
+        $grammar = $model->getConnection()->getQueryGrammar();
+
         return Activity::query()
             ->whereNotNull($column)
-            ->where($column, 'like', '%' . $this->escapeLike($query) . '%')
+            // ESCAPE stated rather than assumed. MySQL and Postgres treat
+            // backslash as the escape character by default; SQLite has none
+            // unless one is named, so there the escaping would have reached the
+            // driver as two literal characters and a search for a literal '%'
+            // would have matched nothing.
+            //
+            // '!' rather than a backslash, because a backslash is itself an
+            // escape inside a MySQL string literal and ESCAPE '\' is a syntax
+            // error there.
+            ->whereRaw(
+                $grammar->wrap($model->qualifyColumn($column)) . " LIKE ? ESCAPE '!'",
+                ['%' . $this->escapeLike($query) . '%']
+            )
             ->distinct()
             ->limit($limit)
             ->pluck($column)
@@ -877,10 +897,13 @@ class ActivitylogService
      * Bindings keep this safe either way; what they do not do is stop a typed
      * '%' from matching the whole table and a typed '_' from matching more than
      * the user asked for.
+     *
+     * Paired with the ESCAPE '!' clause above. The escape character has to be
+     * escaped first, or a query containing '!' would consume the '%' after it.
      */
     protected function escapeLike(string $value): string
     {
-        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+        return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $value);
     }
 
     /**

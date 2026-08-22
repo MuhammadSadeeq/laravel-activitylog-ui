@@ -646,15 +646,27 @@ class AnalyticsService
     protected function getUserDailyActivity(Builder $activities): array
     {
         $from = now()->subDays(29)->startOfDay();
+        $expression = $this->dateExpression();
 
         // One grouped query over the window, not one pass over the causer's
         // entire history per day. The previous form walked every activity thirty
         // times to count the handful that fell in the last month.
-        $counts = $activities
-            ->where('created_at', '>=', $from)
-            ->selectRaw('DATE(created_at) as day, COUNT(*) as tally')
-            ->groupBy('day')
-            ->pluck('tally', 'day');
+        //
+        // Through dateExpression() and dayKey() like every other grouped-by-day
+        // query here: DATE() does not exist on SQL Server, and a driver may hand
+        // back a DateTime for a date column, which pluck() would use as an array
+        // key before anything could normalise it.
+        $counts = [];
+
+        foreach (
+            $activities
+                ->where('created_at', '>=', $from)
+                ->selectRaw("{$expression} as day, COUNT(*) as tally")
+                ->groupBy(DB::raw($expression))
+                ->get() as $row
+        ) {
+            $counts[$this->dayKey($row->day)] = (int) $row->tally;
+        }
 
         // Still every day in the window, including the empty ones: the chart
         // draws a continuous month and a gap is not the same as a zero.

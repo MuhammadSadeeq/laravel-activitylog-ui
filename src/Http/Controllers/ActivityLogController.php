@@ -357,8 +357,12 @@ class ActivityLogController extends Controller
                 // partway down the list, and pinning to it would silently hide
                 // everything above.
                 'anchor_id' => $anchor['id'] ?? ($activities->currentPage() === 1 ? $activities->first()?->getKey() : null),
+                // Microseconds included. A truncated anchor is not the row's
+                // timestamp on a column that stores sub-second precision, so the
+                // "everything at or before this" predicate excluded the whole
+                // second the anchor sits in and skipped every row in it.
                 'anchor_time' => $anchor['time'] ?? ($activities->currentPage() === 1
-                    ? $activities->first()?->created_at?->format('Y-m-d H:i:s')
+                    ? $activities->first()?->created_at?->format('Y-m-d H:i:s.u')
                     : null),
             ]);
         } catch (ValidationException | HttpExceptionInterface $e) {
@@ -860,8 +864,11 @@ class ActivityLogController extends Controller
             $this->rejectInput('anchor_id', 'The anchor_id parameter must be an integer.');
         }
 
-        if (!is_string($rawTime) || preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/', $rawTime) !== 1) {
-            $this->rejectInput('anchor_time', 'The anchor_time parameter must be a timestamp of the form Y-m-d H:i:s.');
+        // Fractional seconds optional, so a client holding an anchor minted
+        // before they were sent still works, and a log stored with sub-second
+        // precision can send back the timestamp it actually has.
+        if (!is_string($rawTime) || preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$/', $rawTime) !== 1) {
+            $this->rejectInput('anchor_time', 'The anchor_time parameter must be a timestamp of the form Y-m-d H:i:s, optionally with fractional seconds.');
         }
 
         return ['time' => str_replace('T', ' ', $rawTime), 'id' => $id];

@@ -225,13 +225,22 @@ two disagreed — which is any log containing backdated or imported activities.
 * If you call `/api/activities` directly, send both values back, taken from
   `anchor_id` and `anchor_time` in the previous response. Sending one without
   the other returns **422**.
+* `anchor_time` carries microseconds (`Y-m-d H:i:s.u`). Send back what you were
+  given rather than reformatting it: on a log stored with sub-second precision, a
+  timestamp truncated to the second is not the anchor row's time, and the
+  predicate then excludes every row in that second. Second-precision values are
+  still accepted, for anchors minted before this release.
 * `anchor_id` must now be an integer when the log's key is an integer. It was
   previously accepted as any identifier-shaped string, which MySQL coerced to 0
   and answered with an empty page.
 * `ActivitylogService::getActivities()` takes `?array $anchor` as its third
   argument instead of `int|string|null $anchorId`.
-* `Activity::hasMonotonicKey()` is gone. It disabled anchoring for UUID and ULID
-  keys; the pair comparison is correct for those, so nothing needs to ask.
+* `Activity::hasMonotonicKey()` is gone. It disabled anchoring entirely for UUID
+  and ULID keys. Comparing the pair is a large improvement for those — the key is
+  now only the tiebreak within one timestamp rather than the whole ordering — so
+  anchoring is worth doing rather than switching off. It is not a complete fix:
+  a row inserted at the anchor's exact timestamp with a lower random key can
+  still join the frozen set. An auto-incrementing key has no such window.
 
 ### Removed: `searchWithSuggestions()`
 

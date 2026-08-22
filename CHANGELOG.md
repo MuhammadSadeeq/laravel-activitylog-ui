@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Out-of-range and unusable request parameters now return `422` instead of being silently clamped or dropped. `per_page=999999` used to become 100 and an unusable `causer_id` became no causer filter at all, each answering `200` as though nothing had changed — and a dropped filter shows *more* of the audit log than was asked for. Affects `page`, `per_page`, `anchor_id`, `causer_id`, `subject_id`, `event_types` and the single-value filters, on the list, analytics and export endpoints. Omitted or empty parameters still use the default. See UPGRADING.md.
 - Exports are now scoped to the user who created them. Both the download and the progress endpoint refuse anyone else, and job ids are random rather than `uniqid()`. Shared export URLs will stop working across users.
 - Removed `ActivitylogService::searchWithSuggestions()` and the `search()` controller action it served. The action had no route, so nothing could reach it, but it was a second implementation of the suggestions feature carrying the same email exposure fixed below. Use `getSearchSuggestions()`.
-- Removed `Activity::hasMonotonicKey()`. It existed to switch pagination anchoring off for UUID and ULID keys; the anchor now compares `(created_at, key)` and is correct for those keys, so nothing needs to ask.
-- The activity list endpoint requires `anchor_id` and `anchor_time` together. Sending one without the other returns `422` rather than being applied as half an anchor. Clients using the shipped UI are unaffected.
+- Removed `Activity::hasMonotonicKey()`. It existed to switch pagination anchoring off entirely for UUID and ULID keys; the anchor now compares `(created_at, key)`, which reduces the key to a tiebreak within one timestamp and makes anchoring worth doing for those keys rather than disabling it. A row inserted at the anchor's exact timestamp with a lower random key can still join the pinned set; an auto-incrementing key has no such window.
+- The activity list endpoint requires `anchor_id` and `anchor_time` together. Sending one without the other returns `422` rather than being applied as half an anchor. `anchor_time` now carries microseconds; send back the value you were given rather than reformatting it. Clients using the shipped UI are unaffected.
 
 ### Changed
 - The UI no longer loads the Tailwind Play CDN, Chart.js or a webfont at page load — roughly 630KB of third-party assets. It ships one stylesheet served on a versioned route by the package itself (about 6KB over the wire), with no build step and nothing to publish. Chart.js is fetched only when a chart is drawn.
@@ -37,7 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the trend chart accumulating a Chart.js instance on every re-render, including on every theme toggle, because the instance was held in Alpine's reactive state and `destroy()` could not reach the animation loop through the proxy.
 - Fixed the analytics view serving figures for the previously selected filters. Changing filters while the table was on screen was recorded but never fetched, and returning to analytics counted as already loaded.
 - Fixed the delete-saved-view dialog declaring `aria-modal` without trapping focus, so Tab left the dialog for controls a screen reader was no longer announcing.
-- Fixed resolution of a custom `activitylog.activity_model` running on every key, table and connection lookup — hundreds of times per page — rather than once per class.
+- Fixed resolution of a custom `activitylog.activity_model` running full validation and construction on every key lookup — hundreds of times per page. Key metadata is now settled once per class, while the table and connection are still asked of a freshly built model on every call, so a model that picks either per tenant is followed rather than frozen.
+- Fixed the pagination anchor being truncated to whole seconds. On a log whose `created_at` stores sub-second precision the anchor was not the anchoring row's own timestamp, so every row sharing that second was excluded from later pages.
+- Fixed search suggestions failing to find a literal `%` or `_` on SQLite, which has no LIKE escape character unless one is named.
+- Fixed a slow analytics request for the previous filters overwriting the figures of a faster one for the current filters when the two overlapped.
 
 ### Added
 - `php artisan activitylog-ui:clear-cache` for clearing the filter option caches by hand.
